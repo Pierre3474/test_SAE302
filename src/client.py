@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Client PKI - Fusion de AffichageIP+Port.py et CLientChalenge.py."""
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import socket
 import hashlib
 import getpass

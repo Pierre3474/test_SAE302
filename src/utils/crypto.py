@@ -2,42 +2,98 @@
 """
 Module de cryptographie pour la PKI (utils/crypto.py).
 
-Ce module fournit deux fonctions principales :
-  - generate_key_pair() : genere une paire de cles RSA (privee + publique)
-                          et les sauvegarde au format PEM sur le disque.
-  - generate_csr()      : genere une demande de signature de certificat
-                          (Certificate Signing Request) a partir d'une
-                          cle privee existante.
+Ce module fournit :
+  - XorCipher        : chiffrement/dechiffrement XOR par flot, compatible
+                       avec le serveur (SAE303/src/utils/crypto_custom.py).
+  - generate_key_pair: generation d'une paire de cles RSA au format PEM.
+  - generate_csr     : generation d'une demande de certificat (CSR) X.509.
 
-Toutes les operations cryptographiques utilisent la librairie `cryptography`.
-Les parametres sensibles (organisation, pays, taille de cle) sont passes
-en arguments et proviennent du fichier .env via le module client.py.
+Les parametres (taille de cle, organisation, pays) sont passes en arguments
+par le module client.py, qui les charge depuis le fichier .env.
 """
+
+# ---------------------------------------------------------------------------
+# IMPORTS STANDARDS
+# ---------------------------------------------------------------------------
+import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # IMPORTS — librairie cryptography
 # ---------------------------------------------------------------------------
-# rsa : generation de cles asymetriques RSA
-from cryptography.hazmat.primitives.asymmetric import rsa
-# hashes : algorithmes de hachage (SHA-256 pour signer la CSR)
-from cryptography.hazmat.primitives import hashes, serialization
-# x509 : manipulation de certificats X.509 et CSR
-from cryptography import x509
-# NameOID : identifiants standards pour les champs du sujet (CN, O, C)
-from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives.asymmetric import rsa   # Cles RSA
+from cryptography.hazmat.primitives import hashes            # SHA-256
+from cryptography.hazmat.primitives import serialization     # PEM
+from cryptography import x509                                # Certificats X.509
+from cryptography.x509.oid import NameOID                    # OID standards (CN, O, C)
 
+
+# ===================================================================
+#  CHIFFREMENT XOR — compatible avec le serveur
+# ===================================================================
+
+class XorCipher:
+    """
+    Chiffrement par flot (stream cipher) XOR.
+
+    Le meme objet sert au chiffrement ET au dechiffrement car
+    XOR est son propre inverse :
+        Message  XOR Cle = Chiffre
+        Chiffre  XOR Cle = Message
+
+    La cle doit etre identique cote client et cote serveur
+    (valeur partagee, configuree dans le .env).
+
+    Attributs :
+        key (int) : cle de chiffrement (1 octet, 0-255).
+    """
+
+    def __init__(self, key: int):
+        """
+        Args:
+            key : valeur entiere de la cle XOR (ex: 42).
+
+        Raises:
+            ValueError : si la cle n'est pas dans l'intervalle 0-255.
+        """
+        if not isinstance(key, int) or not (0 <= key <= 255):
+            raise ValueError(f"La cle XOR doit etre un entier entre 0 et 255 (recu: {key})")
+        self.key = key
+
+    def process(self, data: bytes) -> bytes:
+        """
+        Applique le XOR octet par octet sur les donnees.
+
+        Args:
+            data : donnees brutes a chiffrer ou dechiffrer.
+
+        Returns:
+            Donnees transformees (chiffrees ou dechiffrees).
+        """
+        # bytearray permet la modification en place (mutable)
+        buffer = bytearray(data)
+        for i in range(len(buffer)):
+            buffer[i] ^= self.key  # XOR binaire avec la cle
+        return bytes(buffer)
+
+
+# ===================================================================
+#  GENERATION DE CLES RSA
+# ===================================================================
 
 def generate_key_pair(key_dir: str = ".", key_size: int = 2048) -> tuple[str, str]:
     """
     Genere une paire de cles RSA et sauvegarde les fichiers PEM.
 
     La cle privee est sauvegardee SANS chiffrement (NoEncryption) pour
-    simplifier les tests.  En production, il faudrait utiliser
+    simplifier les tests.  En production, utiliser
     BestAvailableEncryption(password) pour proteger la cle privee.
 
     Args:
-        key_dir  : Repertoire de destination pour les fichiers .pem.
-        key_size : Taille de la cle en bits (2048 par defaut, lu depuis .env).
+        key_dir  : repertoire de destination pour les fichiers .pem.
+        key_size : taille de la cle en bits (2048 par defaut, lu depuis .env).
 
     Returns:
         Tuple (chemin_cle_privee, chemin_cle_publique).
@@ -49,6 +105,9 @@ def generate_key_pair(key_dir: str = ".", key_size: int = 2048) -> tuple[str, st
     if key_size < 2048:
         raise ValueError(f"Taille de cle {key_size} bits insuffisante (min 2048).")
 
+    # --- Creation du repertoire si necessaire ---
+    os.makedirs(key_dir, exist_ok=True)
+
     # --- Generation de la cle privee RSA ---
     # public_exponent=65537 est la valeur standard recommandee (F4).
     private_key = rsa.generate_private_key(
@@ -56,12 +115,10 @@ def generate_key_pair(key_dir: str = ".", key_size: int = 2048) -> tuple[str, st
         key_size=key_size,
     )
 
-    # --- Chemins de sortie ---
-    private_path = f"{key_dir}/private_key.pem"
-    public_path = f"{key_dir}/public_key.pem"
+    private_path = os.path.join(key_dir, "private_key.pem")
+    public_path = os.path.join(key_dir, "public_key.pem")
 
-    # --- Sauvegarde de la cle privee au format PEM ---
-    # TraditionalOpenSSL = format PKCS#1 ("BEGIN RSA PRIVATE KEY")
+    # --- Sauvegarde de la cle privee (format PKCS#1) ---
     with open(private_path, "wb") as f:
         f.write(private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -69,8 +126,7 @@ def generate_key_pair(key_dir: str = ".", key_size: int = 2048) -> tuple[str, st
             encryption_algorithm=serialization.NoEncryption(),
         ))
 
-    # --- Extraction et sauvegarde de la cle publique ---
-    # SubjectPublicKeyInfo = format standard ("BEGIN PUBLIC KEY")
+    # --- Sauvegarde de la cle publique ---
     public_key = private_key.public_key()
     with open(public_path, "wb") as f:
         f.write(public_key.public_bytes(
@@ -78,10 +134,14 @@ def generate_key_pair(key_dir: str = ".", key_size: int = 2048) -> tuple[str, st
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         ))
 
-    print(f"[CRYPTO] Cle privee  sauvegardee : {private_path}")
-    print(f"[CRYPTO] Cle publique sauvegardee : {public_path}")
+    logger.info("Cle privee  sauvegardee : %s", private_path)
+    logger.info("Cle publique sauvegardee : %s", public_path)
     return private_path, public_path
 
+
+# ===================================================================
+#  GENERATION DE CSR (Certificate Signing Request)
+# ===================================================================
 
 def generate_csr(private_key_path: str, cn: str, org: str = "SAE302",
                  country: str = "FR", output_path: str = "request.csr") -> str:
@@ -92,19 +152,19 @@ def generate_csr(private_key_path: str, cn: str, org: str = "SAE302",
     inscrites dans le certificat final par l'autorite de certification (CA).
 
     Champs du sujet :
-      - C  (Country)      : code pays ISO 3166-1 alpha-2 (ex: FR)
-      - O  (Organization) : nom de l'organisation (ex: SAE302)
-      - CN (Common Name)  : identifiant unique (ex: nom de l'etudiant)
+      - C  (Country)      : code pays ISO 3166-1 alpha-2 (ex: FR).
+      - O  (Organization) : nom de l'organisation (ex: SAE302).
+      - CN (Common Name)  : identifiant unique (ex: nom de l'etudiant).
 
     La CSR est signee localement avec SHA-256, prouvant que le demandeur
     possede bien la cle privee correspondante.
 
     Args:
-        private_key_path : Chemin vers le fichier de cle privee PEM.
+        private_key_path : chemin vers le fichier de cle privee PEM.
         cn               : Common Name a inscrire dans le certificat.
-        org              : Nom de l'organisation (defaut depuis .env).
-        country          : Code pays 2 lettres (defaut depuis .env).
-        output_path      : Chemin du fichier CSR genere.
+        org              : nom de l'organisation (defaut depuis .env).
+        country          : code pays 2 lettres (defaut depuis .env).
+        output_path      : chemin du fichier CSR genere.
 
     Returns:
         Chemin du fichier CSR cree.
@@ -113,15 +173,25 @@ def generate_csr(private_key_path: str, cn: str, org: str = "SAE302",
         FileNotFoundError : si la cle privee n'existe pas.
         ValueError        : si la cle privee est invalide.
     """
-    # --- Chargement de la cle privee depuis le disque ---
-    with open(private_key_path, "rb") as f:
-        private_key = serialization.load_pem_private_key(
-            f.read(),
-            password=None,  # Pas de mot de passe (coherent avec generate_key_pair)
-        )
+    # --- Validation des parametres ---
+    if not cn or not cn.strip():
+        raise ValueError("Le Common Name (CN) ne peut pas etre vide.")
+    if len(country) != 2 or not country.isalpha():
+        raise ValueError(f"Le code pays doit etre 2 lettres ISO (recu: {country})")
 
-    # --- Construction de la CSR ---
-    # On definit le sujet (Subject) avec les champs C, O, CN
+    if not os.path.isfile(private_key_path):
+        raise FileNotFoundError(f"Cle privee introuvable : {private_key_path}")
+
+    with open(private_key_path, "rb") as f:
+        try:
+            private_key = serialization.load_pem_private_key(
+                f.read(),
+                password=None,
+            )
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Cle privee invalide ({private_key_path}) : {e}") from e
+
+    # --- Construction de la CSR avec les champs du sujet ---
     csr = (
         x509.CertificateSigningRequestBuilder()
         .subject_name(x509.Name([
@@ -129,13 +199,12 @@ def generate_csr(private_key_path: str, cn: str, org: str = "SAE302",
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, org),
             x509.NameAttribute(NameOID.COMMON_NAME, cn),
         ]))
-        # Signature avec la cle privee et l'algorithme SHA-256
         .sign(private_key, hashes.SHA256())
     )
 
-    # --- Sauvegarde de la CSR au format PEM ---
+    # --- Sauvegarde au format PEM ---
     with open(output_path, "wb") as f:
         f.write(csr.public_bytes(serialization.Encoding.PEM))
 
-    print(f"[CRYPTO] CSR generee : {output_path} (CN={cn}, O={org}, C={country})")
+    logger.info("CSR generee : %s (CN=%s, O=%s, C=%s)", output_path, cn, org, country)
     return output_path

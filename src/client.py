@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 4) IMPORTS INTERNES
 # ---------------------------------------------------------------------------
-from utils.crypto import XorCipher, generate_key_pair, generate_csr
+from utils.crypto import XorCipher, generate_key_pair, generate_csr, show_key_info, show_csr_info
 
 # ---------------------------------------------------------------------------
 # 5) CHARGEMENT DU .env
@@ -65,12 +65,34 @@ load_dotenv(_ENV_PATH, override=False)
 
 # --- Lecture des variables avec valeurs par defaut ---
 SERVER_IP    = os.getenv("SERVER_IP", "127.0.0.1")
-SERVER_PORT  = int(os.getenv("SERVER_PORT", "7890"))
-XOR_KEY      = int(os.getenv("XOR_KEY", "42"))
 CSR_ORG      = os.getenv("CSR_ORG", "SAE302")
 CSR_COUNTRY  = os.getenv("CSR_COUNTRY", "FR")
 KEY_DIR      = os.getenv("KEY_DIR", "./keys")
-RSA_KEY_SIZE = int(os.getenv("RSA_KEY_SIZE", "2048"))
+
+# --- Validation des variables numeriques du .env ---
+try:
+    SERVER_PORT = int(os.getenv("SERVER_PORT", "7890"))
+    if not (1 <= SERVER_PORT <= 65535):
+        raise ValueError
+except ValueError:
+    logger.error("SERVER_PORT invalide dans .env (attendu: 1-65535)")
+    sys.exit(1)
+
+try:
+    XOR_KEY = int(os.getenv("XOR_KEY", "42"))
+    if not (0 <= XOR_KEY <= 255):
+        raise ValueError
+except ValueError:
+    logger.error("XOR_KEY invalide dans .env (attendu: 0-255)")
+    sys.exit(1)
+
+try:
+    RSA_KEY_SIZE = int(os.getenv("RSA_KEY_SIZE", "2048"))
+    if RSA_KEY_SIZE < 2048:
+        raise ValueError
+except ValueError:
+    logger.error("RSA_KEY_SIZE invalide dans .env (attendu: >= 2048)")
+    sys.exit(1)
 
 
 class PKIClient:
@@ -137,7 +159,7 @@ class PKIClient:
 
         # Reception et dechiffrement du hello serveur
         raw_hello = self.sock.recv(1024)
-        hello = self.cipher.process(raw_hello).decode("utf-8")
+        hello = self.cipher.process(raw_hello).decode("utf-8", errors="replace")
         logger.info("RECV: %s", hello)
 
     def send_command(self, command: str) -> str:
@@ -174,7 +196,7 @@ class PKIClient:
                 self.sock = None
                 return "[ERREUR] Connexion perdue."
 
-            return self.cipher.process(raw_response).decode("utf-8")
+            return self.cipher.process(raw_response).decode("utf-8", errors="replace")
         except socket.timeout:
             logger.error("Timeout : le serveur ne repond pas.")
             return "[ERREUR] Timeout serveur."
@@ -282,8 +304,10 @@ class PKIClient:
         """
         if not args:
             print("Commandes locales :")
-            print("  local keygen [repertoire]  — Generer une paire de cles RSA")
-            print("  local csr <cle.pem> <CN>   — Generer une CSR")
+            print("  local keygen [repertoire]    — Generer une paire de cles RSA")
+            print("  local csr <cle.pem> <CN>     — Generer une CSR")
+            print("  local show key <fichier.pem> — Afficher les infos d'une cle")
+            print("  local show csr <fichier.csr> — Afficher les infos d'une CSR")
             return True
 
         sub = args[0]
@@ -313,6 +337,21 @@ class PKIClient:
                 )
             except Exception as e:
                 logger.error("Echec CSR : %s", e)
+            return True
+
+        elif sub == "show" and len(args) >= 3:
+            # --- Inspection de fichiers PEM/CSR ---
+            show_type = args[1]
+            file_path = args[2]
+            try:
+                if show_type == "key":
+                    print(show_key_info(file_path))
+                elif show_type == "csr":
+                    print(show_csr_info(file_path))
+                else:
+                    print(f"Type inconnu : {show_type} (utiliser 'key' ou 'csr')")
+            except Exception as e:
+                logger.error("Echec show : %s", e)
             return True
 
         return False
@@ -448,6 +487,8 @@ Commandes disponibles :
   --- Commandes locales (sans serveur) ---
   local keygen [repertoire]       — Generer une paire RSA localement
   local csr <cle.pem> <CN>        — Generer une CSR localement
+  local show key <fichier.pem>    — Afficher les infos d'une cle
+  local show csr <fichier.csr>    — Afficher les infos d'une CSR
 
   bye                             — Quitter le contexte ou se deconnecter
 """)

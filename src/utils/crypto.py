@@ -17,6 +17,7 @@ par le module client.py, qui les charge depuis le fichier .env.
 # ---------------------------------------------------------------------------
 import os
 import stat
+import hashlib
 import logging
 
 logger = logging.getLogger(__name__)
@@ -76,11 +77,8 @@ class XorCipher:
         Returns:
             Donnees transformees (chiffrees ou dechiffrees).
         """
-        # bytearray permet la modification en place (mutable)
-        buffer = bytearray(data)
-        for i in range(len(buffer)):
-            buffer[i] ^= self.key  # XOR binaire avec la cle
-        return bytes(buffer)
+        # Expression generatrice : XOR chaque octet avec la cle
+        return bytes(b ^ self.key for b in data)
 
 
 # ===================================================================
@@ -283,3 +281,60 @@ def show_csr_info(csr_path: str) -> str:
     subject = csr.subject.rfc4514_string()
     algo = csr.signature_hash_algorithm.name if csr.signature_hash_algorithm else "inconnu"
     return f"CSR — Sujet: {subject} | Algo: {algo} ({csr_path})"
+
+
+def verify_csr(csr_path: str) -> bool:
+    """
+    Verifie la signature d'une CSR (Certificate Signing Request).
+
+    Controle que la signature de la CSR est valide, c'est-a-dire que
+    le demandeur possede bien la cle privee correspondante.
+
+    Args:
+        csr_path : chemin vers le fichier .csr.
+
+    Returns:
+        True si la signature est valide, False sinon.
+
+    Raises:
+        FileNotFoundError : si le fichier n'existe pas.
+        ValueError        : si le fichier n'est pas une CSR valide.
+    """
+    if not os.path.isfile(csr_path):
+        raise FileNotFoundError(f"Fichier introuvable : {csr_path}")
+
+    with open(csr_path, "rb") as f:
+        try:
+            csr = x509.load_pem_x509_csr(f.read())
+        except Exception as e:
+            raise ValueError(f"CSR invalide ({csr_path}) : {e}") from e
+
+    return csr.is_signature_valid
+
+
+def hash_file(file_path: str, algorithm: str = "sha256") -> str:
+    """
+    Calcule l'empreinte (hash) d'un fichier.
+
+    Args:
+        file_path : chemin vers le fichier a hasher.
+        algorithm : algorithme de hachage (sha256, sha512, md5).
+
+    Returns:
+        Empreinte hexadecimale du fichier.
+
+    Raises:
+        FileNotFoundError : si le fichier n'existe pas.
+        ValueError        : si l'algorithme n'est pas supporte.
+    """
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"Fichier introuvable : {file_path}")
+
+    if algorithm not in hashlib.algorithms_available:
+        raise ValueError(f"Algorithme non supporte : {algorithm}")
+
+    h = hashlib.new(algorithm)
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()

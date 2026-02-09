@@ -20,6 +20,8 @@ from utils.crypto import (
     generate_csr,
     show_key_info,
     show_csr_info,
+    verify_csr,
+    hash_file,
 )
 
 
@@ -210,3 +212,78 @@ class TestShowInfo:
         """show_csr_info avec fichier inexistant doit lever FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             show_csr_info("/chemin/inexistant.csr")
+
+
+# ===================================================================
+#  TESTS verify_csr
+# ===================================================================
+
+class TestVerifyCSR:
+    """Tests pour la verification de signature CSR."""
+
+    def test_csr_valide(self, tmp_path):
+        """Une CSR generee correctement doit avoir une signature valide."""
+        priv, _ = generate_key_pair(str(tmp_path), key_size=2048)
+        csr_path = os.path.join(str(tmp_path), "valid.csr")
+        generate_csr(priv, cn="Valid", output_path=csr_path)
+        assert verify_csr(csr_path) is True
+
+    def test_csr_fichier_inexistant(self):
+        """verify_csr avec fichier inexistant doit lever FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            verify_csr("/chemin/inexistant.csr")
+
+    def test_csr_fichier_invalide(self, tmp_path):
+        """verify_csr avec un fichier non-CSR doit lever ValueError."""
+        fake = os.path.join(str(tmp_path), "fake.csr")
+        with open(fake, "w") as f:
+            f.write("pas une CSR")
+        with pytest.raises(ValueError):
+            verify_csr(fake)
+
+
+# ===================================================================
+#  TESTS hash_file
+# ===================================================================
+
+class TestHashFile:
+    """Tests pour le calcul d'empreintes."""
+
+    def test_hash_sha256(self, tmp_path):
+        """hash_file doit retourner un hash SHA-256 de 64 caracteres hex."""
+        test_file = os.path.join(str(tmp_path), "test.txt")
+        with open(test_file, "w") as f:
+            f.write("contenu de test")
+        digest = hash_file(test_file)
+        assert len(digest) == 64  # SHA-256 = 64 hex chars
+        assert all(c in "0123456789abcdef" for c in digest)
+
+    def test_hash_md5(self, tmp_path):
+        """hash_file avec md5 doit retourner un hash de 32 caracteres."""
+        test_file = os.path.join(str(tmp_path), "test.txt")
+        with open(test_file, "w") as f:
+            f.write("contenu")
+        digest = hash_file(test_file, algorithm="md5")
+        assert len(digest) == 32
+
+    def test_hash_deterministe(self, tmp_path):
+        """Le meme fichier doit toujours donner le meme hash."""
+        test_file = os.path.join(str(tmp_path), "test.txt")
+        with open(test_file, "w") as f:
+            f.write("reproductible")
+        h1 = hash_file(test_file)
+        h2 = hash_file(test_file)
+        assert h1 == h2
+
+    def test_hash_fichier_inexistant(self):
+        """hash_file avec fichier inexistant doit lever FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            hash_file("/chemin/inexistant.txt")
+
+    def test_hash_algo_invalide(self, tmp_path):
+        """hash_file avec algo invalide doit lever ValueError."""
+        test_file = os.path.join(str(tmp_path), "test.txt")
+        with open(test_file, "w") as f:
+            f.write("test")
+        with pytest.raises(ValueError):
+            hash_file(test_file, algorithm="algo_inexistant")

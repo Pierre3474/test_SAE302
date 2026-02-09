@@ -30,12 +30,16 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import socket       # Communication TCP avec le serveur
 import argparse     # Parsing des arguments en ligne de commande (-H, -u, -p)
 import getpass      # Saisie masquee du mot de passe
+import logging      # Journalisation structuree
+try:
+    import readline  # Historique des commandes (fleches haut/bas)
+except ImportError:
+    pass             # readline non disponible sur certains systemes
 
 # ---------------------------------------------------------------------------
 # 3) IMPORTS TIERS
 # ---------------------------------------------------------------------------
 from dotenv import load_dotenv  # Chargement des variables depuis .env
-import logging                  # Journalisation structuree
 
 # ---------------------------------------------------------------------------
 # 3b) CONFIGURATION DU LOGGING
@@ -213,7 +217,8 @@ class PKIClient:
 
         # Envoi de la commande de login
         response = self.send_command(f"login {username} {password}")
-        logger.info("AUTH: %s", response)
+        # Ne pas logger la reponse complete (pourrait contenir des infos sensibles)
+        logger.info("AUTH: %s", response.split()[0] if response else "pas de reponse")
 
         # Le serveur repond "OK <role>" en cas de succes
         if response.startswith("OK"):
@@ -286,7 +291,6 @@ class PKIClient:
         if sub == "keygen":
             # --- Generation de cles RSA locale ---
             key_dir = args[1] if len(args) > 1 else KEY_DIR
-            os.makedirs(key_dir, exist_ok=True)
             try:
                 generate_key_pair(key_dir, key_size=RSA_KEY_SIZE)
             except Exception as e:
@@ -520,6 +524,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Demander le mot de passe (saisie masquee)",
     )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Activer les logs de debug",
+    )
 
     return parser.parse_args()
 
@@ -530,6 +539,10 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
+
+    # --- Niveau de log selon --verbose ---
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     # --- Creation du client ---
     client = PKIClient(

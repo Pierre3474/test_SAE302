@@ -33,8 +33,9 @@ import getpass      # Saisie masquee du mot de passe
 import logging      # Journalisation structuree
 try:
     import readline  # Historique des commandes (fleches haut/bas)
+    _HAS_READLINE = True
 except ImportError:
-    pass             # readline non disponible sur certains systemes
+    _HAS_READLINE = False
 
 # ---------------------------------------------------------------------------
 # 3) IMPORTS TIERS
@@ -53,7 +54,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 4) IMPORTS INTERNES
 # ---------------------------------------------------------------------------
-from utils.crypto import XorCipher, generate_key_pair, generate_csr, show_key_info, show_csr_info
+from utils.crypto import (
+    XorCipher, generate_key_pair, generate_csr,
+    show_key_info, show_csr_info, verify_csr, hash_file,
+)
 
 # ---------------------------------------------------------------------------
 # 5) CHARGEMENT DU .env
@@ -314,6 +318,8 @@ class PKIClient:
             print("  local csr <cle.pem> <CN>     — Generer une CSR")
             print("  local show key <fichier.pem> — Afficher les infos d'une cle")
             print("  local show csr <fichier.csr> — Afficher les infos d'une CSR")
+            print("  local verify csr <fichier>   — Verifier la signature d'une CSR")
+            print("  local hash <fichier> [algo]  — Empreinte SHA-256 d'un fichier")
             print("  local list [repertoire]      — Lister les fichiers PEM/CSR")
             return True
 
@@ -360,6 +366,30 @@ class PKIClient:
                 print(f"Fichiers dans {search_dir} :")
                 for f in sorted(found):
                     print(f"  {f}")
+            return True
+
+        elif sub == "hash" and len(args) >= 2:
+            # --- Calcul d'empreinte SHA-256 ---
+            file_path = args[1]
+            algorithm = args[2] if len(args) > 2 else "sha256"
+            try:
+                digest = hash_file(file_path, algorithm)
+                print(f"{algorithm.upper()}: {digest}")
+            except Exception as e:
+                logger.error("Echec hash : %s", e)
+            return True
+
+        elif sub == "verify" and len(args) >= 3 and args[1] == "csr":
+            # --- Verification de la signature d'une CSR ---
+            csr_path = args[2]
+            try:
+                valid = verify_csr(csr_path)
+                if valid:
+                    print(f"Signature CSR valide : {csr_path}")
+                else:
+                    print(f"Signature CSR INVALIDE : {csr_path}")
+            except Exception as e:
+                logger.error("Echec verification : %s", e)
             return True
 
         elif sub == "show" and len(args) >= 3:
@@ -435,6 +465,11 @@ class PKIClient:
             self._print_help()
             return True
 
+        # --- STATUS : affiche l'etat de la connexion ---
+        if cmd == "status":
+            self._print_status()
+            return True
+
         # --- TOUTES LES AUTRES COMMANDES -> SERVEUR ---
         if not self.sock:
             logger.warning("Commande ignoree : non connecte au serveur.")
@@ -465,11 +500,26 @@ class PKIClient:
     #  AIDE
     # ===================================================================
 
+    def _print_status(self):
+        """Affiche l'etat actuel du client."""
+        if self.sock:
+            src_ip, src_port = self.sock.getsockname()
+            dst_ip, dst_port = self.sock.getpeername()
+            print(f"Connexion : {src_ip}:{src_port} -> {dst_ip}:{dst_port}")
+        else:
+            print("Connexion : deconnecte")
+        print(f"Utilisateur : {self.username or 'non authentifie'}")
+        print(f"Role : {self.role or 'aucun'}")
+        if self.context:
+            print(f"Contexte : {self.ctx_type} = {self.context}")
+        print(f"Chiffrement : XOR (cle={self.cipher.key})")
+
     def _print_help(self):
         """Affiche l'aide des commandes disponibles."""
         print("""
 Commandes disponibles :
   help                            — Afficher cette aide
+  status                          — Afficher l'etat de la connexion
 
   --- Gestion des utilisateurs (admin) ---
   users list                      — Lister les utilisateurs
@@ -512,6 +562,8 @@ Commandes disponibles :
   local csr <cle.pem> <CN>        — Generer une CSR localement
   local show key <fichier.pem>    — Afficher les infos d'une cle
   local show csr <fichier.csr>    — Afficher les infos d'une CSR
+  local verify csr <fichier.csr>  — Verifier la signature d'une CSR
+  local hash <fichier> [algo]     — Empreinte d'un fichier (defaut: sha256)
   local list [repertoire]         — Lister les fichiers PEM/CSR/CRT
 
   bye                             — Quitter le contexte ou se deconnecter
@@ -529,6 +581,28 @@ Commandes disponibles :
         et les traite une par une jusqu'a ce que l'utilisateur tape "bye"
         sans contexte actif.
         """
+        # --- Auto-completion des commandes ---
+        if _HAS_READLINE:
+            commands = [
+                "help", "bye", "local", "local keygen", "local csr",
+                "local show key", "local show csr", "local list",
+                "users list", "users create", "users delete",
+                "users enable", "users disable", "users infos", "users update",
+                "pki list", "pki add", "pki delete", "pki infos",
+                "pki update", "pki dump",
+                "keygen", "list keys", "list csr", "list crt",
+                "show privkey", "show pubkey", "show csr", "show crt",
+                "keypem", "req csr", "csrpem", "sign crt", "crtpem",
+                "revoke", "crlgen", "rename",
+            ]
+
+            def completer(text, state):
+                matches = [c for c in commands if c.startswith(text)]
+                return matches[state] if state < len(matches) else None
+
+            readline.set_completer(completer)
+            readline.parse_and_bind("tab: complete")
+
         logger.info("Serveur : %s:%s", self.host, self.port)
         logger.info("Chiffrement : XOR (cle=%s)", self.cipher.key)
         print("Tapez 'help' pour la liste des commandes.\n")

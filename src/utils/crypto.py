@@ -16,6 +16,7 @@ par le module client.py, qui les charge depuis le fichier .env.
 # IMPORTS STANDARDS
 # ---------------------------------------------------------------------------
 import os
+import stat
 import logging
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,10 @@ def generate_key_pair(key_dir: str = ".", key_size: int = 2048) -> tuple[str, st
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         ))
 
-    logger.info("Cle privee  sauvegardee : %s", private_path)
+    # --- Permissions restrictives sur la cle privee (lecture/ecriture proprio uniquement) ---
+    os.chmod(private_path, stat.S_IRUSR | stat.S_IWUSR)  # chmod 600
+
+    logger.info("Cle privee  sauvegardee : %s (chmod 600)", private_path)
     logger.info("Cle publique sauvegardee : %s", public_path)
     return private_path, public_path
 

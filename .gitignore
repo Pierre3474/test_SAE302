@@ -13,3 +13,8 @@ keys/
 # Python
 __pycache__/
 *.pyc
+
+# Tests / pytest
+.pytest_cache/
+htmlcov/
+.coverage

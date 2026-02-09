@@ -133,6 +133,11 @@ class PKIClient:
         self.context = None     # Nom du contexte actif (ex: "ca1", "bob")
         self.ctx_type = None    # Type : "pki" ou "user"
 
+    def __repr__(self) -> str:
+        status = "connecte" if self.sock else "deconnecte"
+        user = self.username or "anonyme"
+        return f"PKIClient({self.host}:{self.port}, {status}, user={user})"
+
     # ===================================================================
     #  COMMUNICATION RESEAU
     # ===================================================================
@@ -211,10 +216,11 @@ class PKIClient:
             try:
                 # Prevenir le serveur avant de couper
                 self.send_command("bye")
-            except Exception:
+            except OSError:
                 pass
-            self.sock.close()
-            self.sock = None
+            finally:
+                self.sock.close()
+                self.sock = None
 
     # ===================================================================
     #  AUTHENTIFICATION
@@ -308,6 +314,7 @@ class PKIClient:
             print("  local csr <cle.pem> <CN>     — Generer une CSR")
             print("  local show key <fichier.pem> — Afficher les infos d'une cle")
             print("  local show csr <fichier.csr> — Afficher les infos d'une CSR")
+            print("  local list [repertoire]      — Lister les fichiers PEM/CSR")
             return True
 
         sub = args[0]
@@ -337,6 +344,22 @@ class PKIClient:
                 )
             except Exception as e:
                 logger.error("Echec CSR : %s", e)
+            return True
+
+        elif sub == "list":
+            # --- Liste des fichiers PEM/CSR dans un repertoire ---
+            search_dir = args[1] if len(args) > 1 else KEY_DIR
+            if not os.path.isdir(search_dir):
+                logger.warning("Repertoire inexistant : %s", search_dir)
+                return True
+            found = [f for f in os.listdir(search_dir)
+                     if f.endswith((".pem", ".csr", ".crt"))]
+            if not found:
+                print(f"Aucun fichier PEM/CSR/CRT dans {search_dir}")
+            else:
+                print(f"Fichiers dans {search_dir} :")
+                for f in sorted(found):
+                    print(f"  {f}")
             return True
 
         elif sub == "show" and len(args) >= 3:
@@ -407,8 +430,8 @@ class PKIClient:
             self.handle_local_command(parts[1:])
             return True
 
-        # --- HELP LOCAL (aide rapide si pas connecte) ---
-        if cmd == "help" and not self.sock:
+        # --- HELP : affiche l'aide locale ---
+        if cmd == "help":
             self._print_help()
             return True
 
@@ -489,6 +512,7 @@ Commandes disponibles :
   local csr <cle.pem> <CN>        — Generer une CSR localement
   local show key <fichier.pem>    — Afficher les infos d'une cle
   local show csr <fichier.csr>    — Afficher les infos d'une CSR
+  local list [repertoire]         — Lister les fichiers PEM/CSR/CRT
 
   bye                             — Quitter le contexte ou se deconnecter
 """)
@@ -599,7 +623,10 @@ if __name__ == "__main__":
         logger.error("Impossible de se connecter a %s:%s", args.host, args.port)
         logger.error("Verifiez que le serveur est demarre.")
         sys.exit(1)
-    except Exception as e:
+    except socket.timeout:
+        logger.error("Timeout : le serveur %s:%s ne repond pas.", args.host, args.port)
+        sys.exit(1)
+    except OSError as e:
         logger.error("Erreur de connexion : %s", e)
         sys.exit(1)
 

@@ -63,6 +63,9 @@ class XorCipher:
             raise ValueError(f"La cle XOR doit etre un entier entre 0 et 255 (recu: {key})")
         self.key = key
 
+    def __repr__(self) -> str:
+        return f"XorCipher(key={self.key})"
+
     def process(self, data: bytes) -> bytes:
         """
         Applique le XOR octet par octet sur les donnees.

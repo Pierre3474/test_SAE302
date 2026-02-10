@@ -18,3 +18,13 @@ __pycache__/
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Logs serveur
+logs/*.log
+
+# Docker volumes
+postgres_data/
+
+# Brouillons
+SAE303/
+drafts/

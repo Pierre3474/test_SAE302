@@ -146,6 +146,9 @@ class PKIClient:
     #  COMMUNICATION RESEAU
     # ===================================================================
 
+    # Taille du header de framing (10 caracteres ASCII)
+    HEADER_SIZE = 10
+
     def connect(self):
         """
         Etablit la connexion TCP vers le serveur et recoit le message hello.
@@ -166,10 +169,10 @@ class PKIClient:
         dst_ip, dst_port = self.sock.getpeername()
         logger.info("Connecte %s:%s -> %s:%s", src_ip, src_port, dst_ip, dst_port)
 
-        # Reception et dechiffrement du hello serveur
-        raw_hello = self.sock.recv(1024)
-        hello = self.cipher.process(raw_hello).decode("utf-8", errors="replace")
-        logger.info("RECV: %s", hello)
+        # Reception et dechiffrement du hello serveur (avec framing)
+        hello = self._recv_framed()
+        if hello:
+            logger.info("RECV: %s", hello)
 
     def send_command(self, command: str) -> str:
         """
@@ -194,18 +197,13 @@ class PKIClient:
             return "[ERREUR] Non connecte."
 
         try:
-            # Chiffrement et envoi
-            encrypted = self.cipher.process(command.encode("utf-8"))
-            self.sock.sendall(encrypted)
-
-            # Reception et dechiffrement de la reponse
-            raw_response = self.sock.recv(4096)
-            if not raw_response:
+            self._send_framed(command)
+            response = self._recv_framed()
+            if response is None:
                 logger.error("Connexion perdue avec le serveur.")
                 self.sock = None
                 return "[ERREUR] Connexion perdue."
-
-            return self.cipher.process(raw_response).decode("utf-8", errors="replace")
+            return response
         except socket.timeout:
             logger.error("Timeout : le serveur ne repond pas.")
             return "[ERREUR] Timeout serveur."
@@ -213,6 +211,40 @@ class PKIClient:
             logger.error("Erreur reseau : %s", e)
             self.sock = None
             return f"[ERREUR] Connexion perdue : {e}"
+
+    def _send_framed(self, message: str) -> None:
+        """Envoie un message avec header 10 octets (taille) + payload XOR."""
+        payload = self.cipher.process(message.encode("utf-8"))
+        header = f"{len(payload):<10}".encode("ascii")
+        self.sock.sendall(header + payload)
+
+    def _recv_framed(self) -> str | None:
+        """Recoit un message avec header 10 octets + payload XOR."""
+        header = self._recv_exact(self.HEADER_SIZE)
+        if header is None:
+            return None
+        try:
+            payload_size = int(header.decode("ascii").strip())
+        except (ValueError, UnicodeDecodeError):
+            logger.warning("Header invalide recu")
+            return None
+        if payload_size <= 0 or payload_size > 1_000_000:
+            logger.warning("Taille de payload invalide : %d", payload_size)
+            return None
+        payload = self._recv_exact(payload_size)
+        if payload is None:
+            return None
+        return self.cipher.process(payload).decode("utf-8", errors="replace")
+
+    def _recv_exact(self, size: int) -> bytes | None:
+        """Recoit exactement `size` octets depuis la socket."""
+        data = b""
+        while len(data) < size:
+            chunk = self.sock.recv(size - len(data))
+            if not chunk:
+                return None
+            data += chunk
+        return data
 
     def disconnect(self):
         """Ferme proprement la connexion TCP."""

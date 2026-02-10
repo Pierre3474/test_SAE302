@@ -1,3 +1,5 @@
 cryptography>=42.0.0      # RSA, X.509, CSR (utils/crypto.py)
 python-dotenv==1.0.0      # Chargement du fichier .env
+psycopg2-binary>=2.9.9    # Driver PostgreSQL
+argon2-cffi>=23.1.0       # Hachage de mots de passe (Argon2id)
 pytest>=8.0.0             # Tests unitaires (python -m pytest tests/)

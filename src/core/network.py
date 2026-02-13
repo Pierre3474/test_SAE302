@@ -8,7 +8,7 @@ et dispatche les commandes vers le module commands.
 import os
 import sys
 import socket
-import struct
+import secrets
 import logging
 import threading
 
@@ -32,6 +32,7 @@ class ClientSession:
         self.role: str | None = None
         self.ip: str = addr[0]
         self.authenticated = False
+        self.challenge: str = secrets.token_hex(16)
 
     def __repr__(self) -> str:
         user = self.username or "anonyme"
@@ -156,8 +157,8 @@ class PKIServer:
         session = ClientSession(conn, addr, cipher)
 
         try:
-            # Envoi du message hello
-            send_framed(conn, cipher, "SAE302 PKI Server ready")
+            # Envoi du message hello avec challenge
+            send_framed(conn, cipher, f"SAE302 PKI Server ready CHALL:{session.challenge}")
 
             while self._running:
                 message = recv_framed(conn, cipher)

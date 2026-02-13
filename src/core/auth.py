@@ -7,6 +7,7 @@ Roles :
     viewer — lecture seule sur ses PKI uniquement.
 """
 
+import hashlib
 import logging
 
 from argon2 import PasswordHasher
@@ -34,6 +35,26 @@ def verify_password(password_hash: str, password: str) -> bool:
 
 
 # ------------------------------------------------------------------
+#  Challenge-response SHA256
+# ------------------------------------------------------------------
+
+def hash_sha256(password: str) -> str:
+    """Retourne le SHA256 hexdigest d'un mot de passe."""
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def compute_challenge_response(challenge: str, password_sha256: str) -> str:
+    """Calcule SHA256(challenge + password_sha256) pour le challenge-response."""
+    return hashlib.sha256((challenge + password_sha256).encode("utf-8")).hexdigest()
+
+
+def verify_challenge(challenge: str, password_sha256: str, client_hash: str) -> bool:
+    """Verifie la reponse du client au challenge."""
+    expected = compute_challenge_response(challenge, password_sha256)
+    return expected == client_hash
+
+
+# ------------------------------------------------------------------
 #  Controle d'acces par role
 # ------------------------------------------------------------------
 
@@ -41,7 +62,7 @@ def verify_password(password_hash: str, password: str) -> bool:
 _PERMISSIONS: dict[str, set[str]] = {
     "admin": {
         "users_list", "users_create", "users_delete", "users_enable",
-        "users_disable", "users_infos", "users_update",
+        "users_disable", "users_infos", "users_update", "users_ctx",
         "pki_list", "pki_add", "pki_delete", "pki_infos", "pki_dump",
         "pki_update", "pki_rename",
         "keygen", "list_keys", "show_privkey", "show_pubkey", "keypem",

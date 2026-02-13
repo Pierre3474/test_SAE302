@@ -31,7 +31,7 @@ _ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env
 load_dotenv(_ENV_PATH, override=False)
 
 from core.db import Database
-from core.auth import hash_password
+from core.auth import hash_password, hash_sha256
 from core.network import PKIServer
 from core.commands import handle_command
 from core.logger import audit
@@ -45,7 +45,8 @@ def seed_admin(db: Database) -> None:
 
     password = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin")
     pw_hash = hash_password(password)
-    db.create_user("admin", pw_hash, role="admin")
+    pw_sha256 = hash_sha256(password)
+    db.create_user("admin", pw_hash, role="admin", password_sha256=pw_sha256)
     audit("SEED_ADMIN", "Compte admin cree au premier demarrage", db=db)
     log.info("Compte admin cree (mot de passe par defaut)")
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TP2 - Tests unitaires : Authentification et securite.
+Tests unitaires : Authentification et securite.
 
 Teste les fonctions du module core/auth.py :
   - hash_password()    : hachage Argon2id
@@ -8,10 +8,8 @@ Teste les fonctions du module core/auth.py :
   - check_permission() : controle d'acces RBAC
   - check_pki_access() : acces aux PKI selon le role
 
-Framework : unittest (https://docs.python.org/fr/3.12/library/unittest.html)
-
 Lancement :
-    python -m unittest TP2.test_auth -v
+    python -m pytest tests/test_auth.py -v
 """
 
 import os
@@ -19,7 +17,6 @@ import sys
 import unittest
 from unittest.mock import MagicMock
 
-# Ajout du dossier src/ au path pour pouvoir importer les modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from core.auth import hash_password, verify_password, check_permission, check_pki_access
@@ -114,8 +111,6 @@ class TestVerifyPassword(unittest.TestCase):
 class TestCheckPermission(unittest.TestCase):
     """Tests pour check_permission() — controle RBAC."""
 
-    # --- Fonctionnement normal : admin ---
-
     def test_admin_peut_gerer_utilisateurs(self):
         """Un admin doit pouvoir gerer les utilisateurs."""
         actions_admin = [
@@ -147,8 +142,6 @@ class TestCheckPermission(unittest.TestCase):
         for action in actions_crypto:
             with self.subTest(action=action):
                 self.assertTrue(check_permission("admin", action))
-
-    # --- Fonctionnement normal : editor ---
 
     def test_editor_ne_peut_pas_gerer_utilisateurs(self):
         """Un editor ne doit PAS pouvoir gerer les utilisateurs."""
@@ -183,8 +176,6 @@ class TestCheckPermission(unittest.TestCase):
             with self.subTest(action=action):
                 self.assertTrue(check_permission("editor", action))
 
-    # --- Fonctionnement normal : viewer ---
-
     def test_viewer_ne_peut_pas_gerer_utilisateurs(self):
         """Un viewer ne doit PAS pouvoir gerer les utilisateurs."""
         self.assertFalse(check_permission("viewer", "users_create"))
@@ -214,8 +205,6 @@ class TestCheckPermission(unittest.TestCase):
         """Un viewer ne doit PAS pouvoir voir les cles privees."""
         self.assertFalse(check_permission("viewer", "show_privkey"))
 
-    # --- Gestion des erreurs ---
-
     def test_role_inconnu(self):
         """Un role inconnu ne doit avoir aucune permission."""
         self.assertFalse(check_permission("inconnu", "users_list"))
@@ -240,12 +229,10 @@ class TestCheckPkiAccess(unittest.TestCase):
     """Tests pour check_pki_access() — acces PKI selon le role."""
 
     def setUp(self):
-        """Prepare un mock de base de donnees pour chaque test."""
         self.bdd = MagicMock()
 
     def test_admin_acces_toutes_pki(self):
         """Un admin doit avoir acces a toutes les PKI, meme non assignees."""
-        # get_user_pkis ne devrait meme pas etre appele pour un admin
         self.assertTrue(check_pki_access(self.bdd, user_id=1, pki_id=99, role="admin"))
         self.bdd.get_user_pkis.assert_not_called()
 

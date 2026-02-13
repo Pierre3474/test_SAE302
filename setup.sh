@@ -23,11 +23,29 @@ echo "   SAE302 — PKI Management System — Setup"
 echo "================================================"
 echo -e "${NC}"
 
+# --- Detection du gestionnaire de paquets systeme ---
+APT_AVAILABLE=false
+if command -v apt-get &> /dev/null; then
+    APT_AVAILABLE=true
+fi
+
+install_system_pkg() {
+    # Installe un ou plusieurs paquets systeme via apt
+    if [ "$APT_AVAILABLE" = true ]; then
+        echo -e "${CYAN}Installation systeme : $*${NC}"
+        apt-get update -qq
+        apt-get install -y -qq "$@"
+    else
+        echo -e "${RED}Impossible d'installer automatiquement : $*${NC}"
+        echo -e "${RED}Installez-les manuellement puis relancez le script.${NC}"
+        exit 1
+    fi
+}
+
 # --- Verification de Python 3 ---
 if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}Erreur : python3 n'est pas installe.${NC}"
-    echo "Installez Python 3.10+ avant de continuer."
-    exit 1
+    echo -e "${YELLOW}python3 non trouve. Installation...${NC}"
+    install_system_pkg python3 python3-venv python3-pip
 fi
 
 PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
@@ -40,14 +58,40 @@ if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" 
 fi
 
 echo -e "${GREEN}Python $PYTHON_VERSION detecte.${NC}"
+
+# --- python3-venv (necessaire sur Debian/Ubuntu) ---
+if ! python3 -m venv --help &> /dev/null; then
+    echo -e "${YELLOW}Module venv manquant. Installation...${NC}"
+    install_system_pkg python3-venv
+fi
 echo ""
 
-# --- Verification de pip ---
-if ! python3 -m pip --version &> /dev/null; then
-    echo -e "${RED}Erreur : pip n'est pas installe.${NC}"
-    echo "Installez pip : python3 -m ensurepip --upgrade"
-    exit 1
+# --- Creation du venv ---
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VENV_DIR="$SCRIPT_DIR/venv"
+
+if [ -d "$VENV_DIR" ]; then
+    echo -e "${GREEN}Environnement virtuel deja present (venv/).${NC}"
+    read -rp "Voulez-vous le recreer ? [o/N] : " RECREATE_VENV
+    if [[ "$RECREATE_VENV" =~ ^[oOyY]$ ]]; then
+        rm -rf "$VENV_DIR"
+        echo -e "${YELLOW}Ancien venv supprime.${NC}"
+        python3 -m venv "$VENV_DIR"
+        echo -e "${GREEN}Nouveau venv cree.${NC}"
+    fi
+else
+    echo -e "${CYAN}Creation de l'environnement virtuel (venv/)...${NC}"
+    python3 -m venv "$VENV_DIR"
+    echo -e "${GREEN}venv cree.${NC}"
 fi
+
+# Activation du venv pour le reste du script
+source "$VENV_DIR/bin/activate"
+echo -e "${GREEN}venv active : $(which python3)${NC}"
+
+# Mise a jour de pip dans le venv
+python3 -m pip install --upgrade pip --quiet
+echo ""
 
 # --- Choix du role ---
 echo -e "${BOLD}Quel role pour cette machine ?${NC}"
@@ -105,12 +149,9 @@ esac
 
 echo ""
 
-# --- Tests (optionnel) ---
-read -rp "Installer pytest pour lancer les tests ? [o/N] : " INSTALL_TESTS
-if [[ "$INSTALL_TESTS" =~ ^[oOyY]$ ]]; then
-    install_packages $TESTS
-    echo -e "${GREEN}pytest installe.${NC}"
-fi
+# --- Tests ---
+echo -e "${BOLD}--- Installation de pytest ---${NC}"
+install_packages $TESTS
 
 echo ""
 
@@ -241,21 +282,50 @@ fi
 
 # --- Docker (serveur uniquement) ---
 if [ "$ROLE" = "server" ] || [ "$ROLE" = "both" ]; then
-    echo -e "${BOLD}--- Configuration serveur ---${NC}"
-    if command -v docker &> /dev/null; then
-        echo -e "${GREEN}Docker detecte.${NC}"
-        if command -v docker compose &> /dev/null; then
-            echo -e "${GREEN}Docker Compose detecte.${NC}"
-            read -rp "Demarrer PostgreSQL maintenant (docker compose up -d) ? [o/N] : " START_DB
-            if [[ "$START_DB" =~ ^[oOyY]$ ]]; then
-                docker compose up -d
-                echo -e "${GREEN}PostgreSQL demarre.${NC}"
-            fi
-        else
-            echo -e "${YELLOW}Docker Compose non detecte. Installez-le pour demarrer PostgreSQL.${NC}"
-        fi
+    echo -e "${BOLD}--- Configuration Docker & PostgreSQL ---${NC}"
+
+    # Installation de Docker si absent
+    if ! command -v docker &> /dev/null; then
+        echo -e "${YELLOW}Docker non detecte. Installation...${NC}"
+        install_system_pkg docker.io
+        systemctl enable --now docker
+        echo -e "${GREEN}Docker installe et demarre.${NC}"
     else
-        echo -e "${YELLOW}Docker non detecte. Installez Docker pour la base de donnees PostgreSQL.${NC}"
+        echo -e "${GREEN}Docker detecte.${NC}"
+    fi
+
+    # Detecter Docker Compose, installer si absent
+    DOCKER_COMPOSE=""
+    if docker compose version &> /dev/null; then
+        DOCKER_COMPOSE="docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE="docker-compose"
+    fi
+
+    if [ -z "$DOCKER_COMPOSE" ]; then
+        echo -e "${YELLOW}Docker Compose non detecte. Installation...${NC}"
+        # Tenter d'abord le plugin v2, sinon le paquet v1
+        if apt-cache show docker-compose-v2 &> /dev/null; then
+            install_system_pkg docker-compose-v2
+        else
+            install_system_pkg docker-compose
+        fi
+        # Re-detecter apres installation
+        if docker compose version &> /dev/null; then
+            DOCKER_COMPOSE="docker compose"
+        elif command -v docker-compose &> /dev/null; then
+            DOCKER_COMPOSE="docker-compose"
+        fi
+    fi
+
+    if [ -n "$DOCKER_COMPOSE" ]; then
+        echo -e "${GREEN}Docker Compose detecte (${DOCKER_COMPOSE}).${NC}"
+        echo -e "${CYAN}Demarrage de PostgreSQL...${NC}"
+        $DOCKER_COMPOSE up -d
+        echo -e "${GREEN}PostgreSQL demarre.${NC}"
+    else
+        echo -e "${RED}Impossible d'installer Docker Compose automatiquement.${NC}"
+        echo -e "${RED}Installez-le manuellement : https://docs.docker.com/compose/install/${NC}"
     fi
     echo ""
 fi
@@ -267,22 +337,30 @@ echo "   Installation terminee !"
 echo "================================================"
 echo -e "${NC}"
 
+echo -e "${YELLOW}Pensez a activer le venv avant de lancer les scripts :${NC}"
+echo -e "  ${BOLD}source venv/bin/activate${NC}"
+echo ""
+
 case "$ROLE" in
     client)
         echo -e "Lancez le client :"
+        echo -e "  ${BOLD}source venv/bin/activate${NC}"
         echo -e "  ${BOLD}python3 src/client.py -H <IP_SERVEUR> -u admin -p${NC}"
         ;;
     server)
         echo -e "Lancez le serveur :"
-        echo -e "  ${BOLD}docker compose up -d${NC}  (si pas deja fait)"
+        echo -e "  ${BOLD}source venv/bin/activate${NC}"
+        echo -e "  ${BOLD}${DOCKER_COMPOSE:-docker compose} up -d${NC}  (si pas deja fait)"
         echo -e "  ${BOLD}python3 src/server.py${NC}"
         ;;
     both)
         echo -e "Lancez le serveur :"
-        echo -e "  ${BOLD}docker compose up -d${NC}  (si pas deja fait)"
+        echo -e "  ${BOLD}source venv/bin/activate${NC}"
+        echo -e "  ${BOLD}${DOCKER_COMPOSE:-docker compose} up -d${NC}  (si pas deja fait)"
         echo -e "  ${BOLD}python3 src/server.py${NC}"
         echo ""
         echo -e "Puis le client (dans un autre terminal) :"
+        echo -e "  ${BOLD}source venv/bin/activate${NC}"
         echo -e "  ${BOLD}python3 src/client.py -H 127.0.0.1 -u admin -p${NC}"
         ;;
 esac

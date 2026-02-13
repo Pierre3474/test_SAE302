@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TP2 - Tests unitaires : Gestion des PKI (admin-user).
+Tests unitaires : Gestion des PKI.
 
 Teste les commandes PKI via handle_command() (core/commands.py)
 et les fonctions du module core/pki_manager.py :
@@ -8,10 +8,8 @@ et les fonctions du module core/pki_manager.py :
   - Contexte PKI : keygen, req csr, sign crt, revoke, crlgen
   - Fonctions de pki_manager : generate_key, generate_csr_server, etc.
 
-Framework : unittest (https://docs.python.org/fr/3.12/library/unittest.html)
-
 Lancement :
-    python -m unittest TP2.test_pki -v
+    python -m pytest tests/test_pki.py -v
 """
 
 import os
@@ -20,7 +18,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
 
-# Ajout du dossier src/ au path pour pouvoir importer les modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from core.commands import handle_command
@@ -67,7 +64,7 @@ class TestListePKI(unittest.TestCase):
             {"id": 1, "name": "ca1", "subject": "CN=CA1", "created_at": "2024-01-01"},
             {"id": 2, "name": "ca2", "subject": "CN=CA2", "created_at": "2024-02-01"},
         ]
-        self.bdd.get_user_pkis.return_value = [1]  # seulement ca1
+        self.bdd.get_user_pkis.return_value = [1]
         resultat = handle_command(session, "pki list", self.bdd)
         self.assertIn("ca1", resultat)
         self.assertNotIn("ca2", resultat)
@@ -203,7 +200,7 @@ class TestInfosPKI(unittest.TestCase):
         """Un editor ne doit PAS voir les infos d'une PKI non assignee."""
         session = SessionFactice(role="editor", user_id=5)
         self.bdd.get_pki.return_value = {"id": 1, "name": "ca1"}
-        self.bdd.get_user_pkis.return_value = []  # pas assignee
+        self.bdd.get_user_pkis.return_value = []
         resultat = handle_command(session, "pki infos ca1", self.bdd)
         self.assertIn("ERREUR", resultat)
         self.assertIn("refuse", resultat.lower())
@@ -236,7 +233,7 @@ class TestGenerationCle(unittest.TestCase):
 
     def setUp(self):
         self.bdd = MagicMock()
-        self.bdd.get_key.return_value = None  # pas de doublon
+        self.bdd.get_key.return_value = None
 
     def test_generation_rsa_2048(self):
         """Generer une cle RSA 2048 doit reussir."""
@@ -295,7 +292,6 @@ class TestGenerationCSR(unittest.TestCase):
 
     def setUp(self):
         self.bdd = MagicMock()
-        # On genere une vraie cle RSA pour pouvoir tester la CSR
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.hazmat.primitives import serialization
         cle_privee = rsa.generate_private_key(public_exponent=65537, key_size=2048)

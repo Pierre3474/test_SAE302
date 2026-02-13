@@ -24,7 +24,3 @@ logs/*.log
 
 # Docker volumes
 postgres_data/
-
-# Brouillons
-SAE303/
-drafts/

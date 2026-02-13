@@ -12,7 +12,7 @@ src/
 │   └── crypto.py       # XorCipher, generation RSA, CSR, hash
 └── core/
     ├── network.py      # Serveur TCP multi-thread + framing
-    ├── auth.py         # Authentification Argon2id + RBAC
+    ├── auth.py         # Authentification Argon2id + challenge SHA256 + RBAC
     ├── commands.py     # Dispatcher de commandes
     ├── pki_manager.py  # Operations PKI (keygen, CSR, sign, CRL)
     ├── db.py           # Pool PostgreSQL (psycopg2)
@@ -120,43 +120,27 @@ local list [repertoire]             # Lister fichiers PEM/CSR/CRT
 
 ## Securite
 
+- **Authentification** : Challenge-response SHA256 (le mot de passe ne transite jamais en clair)
+- **Stockage** : Argon2id (hash cote serveur) + SHA256 (pour challenge-response)
 - **Chiffrement** : XOR stream cipher (cle partagee via .env)
-- **Authentification** : Argon2id (hash cote serveur)
-- **Permissions** : chmod 600 sur cles privees
+- **Permissions** : RBAC (admin, editor, viewer) + isolation PKI par utilisateur
 - **Framing** : header 10 octets pour messages > 4096 bytes
 - **Audit** : logs horodates fichier + base de donnees
 
 ## Tests
 
-### Tests unitaires (utils/crypto)
-
 ```bash
+# Lancer tous les tests
 python -m pytest tests/ -v
 ```
 
-### TP2 — Tests unitaires avances
-
-Tests unitaires complets du serveur PKI avec `unittest` et `unittest.mock`.
-
-```bash
-# Lancer tous les tests TP2
-python -m unittest discover -s TP2 -v
-
-# Lancer un fichier specifique
-python -m unittest TP2.test_auth -v
-python -m unittest TP2.test_users -v
-python -m unittest TP2.test_pki -v
-python -m unittest TP2.test_droits -v
-```
-
-| Fichier | Module teste | Nb tests | Description |
-|---------|-------------|----------|-------------|
-| `test_auth.py` | `core/auth.py` | 35 | Hachage Argon2id, verification, RBAC, acces PKI |
-| `test_users.py` | `core/commands.py` | 56 | Login, CRUD utilisateurs, activation, mise a jour |
-| `test_pki.py` | `core/commands.py` + `pki_manager.py` | 44 | CRUD PKI, keygen, CSR, signature, revocation |
-| `test_droits.py` | `core/auth.py` + `core/commands.py` | 32 | Matrice RBAC, isolation, assignation PKI |
-
-**Total : 167 tests** couvrant fonctionnement normal et gestion des erreurs.
+| Fichier | Module teste | Description |
+|---------|-------------|-------------|
+| `test_crypto.py` | `utils/crypto.py` | XorCipher, generation RSA, CSR, hash |
+| `test_auth.py` | `core/auth.py` | Hachage Argon2id, verification, RBAC, acces PKI |
+| `test_users.py` | `core/commands.py` | Login (classique + challenge), CRUD utilisateurs |
+| `test_pki.py` | `core/commands.py` + `pki_manager.py` | CRUD PKI, keygen, CSR, signature, revocation |
+| `test_droits.py` | `core/auth.py` + `core/commands.py` | Matrice RBAC, isolation, assignation PKI |
 
 ## Docker
 

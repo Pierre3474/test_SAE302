@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TP2 - Tests unitaires : Gestion des droits des utilisateurs (admin).
+Tests unitaires : Gestion des droits des utilisateurs.
 
 Teste les droits d'acces et les interactions entre roles, PKI et permissions :
   - Acces PKI selon le role (admin voit tout, editor/viewer limites)
@@ -8,10 +8,8 @@ Teste les droits d'acces et les interactions entre roles, PKI et permissions :
   - Operations PKI dans un contexte avec controle d'acces
   - Isolation des donnees entre utilisateurs
 
-Framework : unittest (https://docs.python.org/fr/3.12/library/unittest.html)
-
 Lancement :
-    python -m unittest TP2.test_droits -v
+    python -m pytest tests/test_droits.py -v
 """
 
 import os
@@ -19,7 +17,6 @@ import sys
 import unittest
 from unittest.mock import MagicMock
 
-# Ajout du dossier src/ au path pour pouvoir importer les modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from core.commands import handle_command
@@ -59,7 +56,6 @@ class TestAdminAccesPKI(unittest.TestCase):
 
     def test_admin_pas_besoin_assignation(self):
         """L'admin ne devrait pas necessiter d'assignation PKI."""
-        # Meme si get_user_pkis retourne une liste vide, admin a toujours acces
         self.bdd.get_user_pkis.return_value = []
         self.assertTrue(check_pki_access(self.bdd, 1, 99, "admin"))
 
@@ -111,7 +107,7 @@ class TestEditorAccesPKI(unittest.TestCase):
     def test_editor_infos_pki_non_assignee_refuse(self):
         """Un editor ne doit PAS voir les infos d'une PKI non assignee."""
         self.bdd.get_pki.return_value = {"id": 2, "name": "ca_autre"}
-        self.bdd.get_user_pkis.return_value = [1]  # ca_autre (id=2) non assignee
+        self.bdd.get_user_pkis.return_value = [1]
         resultat = handle_command(self.session, "pki infos ca_autre", self.bdd)
         self.assertIn("ERREUR", resultat)
         self.assertIn("refuse", resultat.lower())
@@ -252,7 +248,7 @@ class TestContextePKI(unittest.TestCase):
         """Un editor ne doit PAS pouvoir entrer dans le contexte d'une PKI non assignee."""
         session = SessionFactice(role="editor", user_id=5)
         self.bdd.get_pki.return_value = {"id": 2, "name": "ca2"}
-        self.bdd.get_user_pkis.return_value = [1]  # seulement ca1
+        self.bdd.get_user_pkis.return_value = [1]
         resultat = handle_command(session, "pki update ca2", self.bdd)
         self.assertIn("ERREUR", resultat)
         self.assertIn("refuse", resultat.lower())
@@ -324,7 +320,6 @@ class TestMatricePermissions(unittest.TestCase):
 
     def test_viewer_lecture_seule(self):
         """Le viewer ne doit avoir que des permissions de lecture."""
-        # Actions de lecture que le viewer DOIT avoir
         actions_lecture = [
             "pki_list", "pki_infos", "pki_dump",
             "list_keys", "show_pubkey", "keypem",
@@ -338,7 +333,6 @@ class TestMatricePermissions(unittest.TestCase):
                     f"Viewer devrait avoir la permission de lecture '{action}'"
                 )
 
-        # Actions d'ecriture que le viewer ne doit PAS avoir
         actions_ecriture = [
             "users_create", "users_delete", "pki_add", "pki_delete",
             "keygen", "req_csr", "sign_crt", "revoke", "crlgen",
@@ -371,25 +365,21 @@ class TestIsolationUtilisateurs(unittest.TestCase):
 
     def test_deux_editors_pki_differentes(self):
         """Deux editors avec des PKI differentes ne doivent pas se voir."""
-        # Editor 1 a acces a pki_id=1
         self.bdd.get_user_pkis.return_value = [1]
         self.assertTrue(check_pki_access(self.bdd, user_id=5, pki_id=1, role="editor"))
         self.assertFalse(check_pki_access(self.bdd, user_id=5, pki_id=2, role="editor"))
 
-        # Editor 2 a acces a pki_id=2
         self.bdd.get_user_pkis.return_value = [2]
         self.assertFalse(check_pki_access(self.bdd, user_id=6, pki_id=1, role="editor"))
         self.assertTrue(check_pki_access(self.bdd, user_id=6, pki_id=2, role="editor"))
 
     def test_viewer_pas_acces_pki_editor(self):
         """Un viewer ne doit pas acceder a une PKI assignee a un autre editor."""
-        # PKI 1 assignee a l'editor (user_id=5), pas au viewer (user_id=10)
         self.bdd.get_user_pkis.return_value = []
         self.assertFalse(check_pki_access(self.bdd, user_id=10, pki_id=1, role="viewer"))
 
     def test_admin_acces_pki_de_tous(self):
         """Un admin doit acceder aux PKI de tous les utilisateurs."""
-        # Meme sans assignation explicite
         self.bdd.get_user_pkis.return_value = []
         self.assertTrue(check_pki_access(self.bdd, user_id=1, pki_id=1, role="admin"))
         self.assertTrue(check_pki_access(self.bdd, user_id=1, pki_id=2, role="admin"))

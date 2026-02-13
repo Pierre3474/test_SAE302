@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-TP2 - Tests unitaires : Gestion des utilisateurs (admin-user).
+Tests unitaires : Gestion des utilisateurs.
 
 Teste les commandes utilisateur via handle_command() (core/commands.py) :
-  - login             : authentification
+  - login             : authentification (classique + challenge-response)
   - users list        : lister les utilisateurs
   - users create      : creer un utilisateur
   - users delete      : supprimer un utilisateur
@@ -12,10 +12,8 @@ Teste les commandes utilisateur via handle_command() (core/commands.py) :
   - users infos       : informations utilisateur
   - users update      : modifier role / mot de passe
 
-Framework : unittest (https://docs.python.org/fr/3.12/library/unittest.html)
-
 Lancement :
-    python -m unittest TP2.test_users -v
+    python -m pytest tests/test_users.py -v
 """
 
 import os
@@ -23,23 +21,23 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-# Ajout du dossier src/ au path pour pouvoir importer les modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from core.commands import handle_command
-from core.auth import hash_password
+from core.auth import hash_password, hash_sha256, compute_challenge_response
 
 
 class SessionFactice:
     """Session factice pour simuler un client connecte."""
 
     def __init__(self, role="admin", authenticated=True, user_id=1,
-                 username="admin", ip="127.0.0.1"):
+                 username="admin", ip="127.0.0.1", challenge="abc123"):
         self.role = role
         self.authenticated = authenticated
         self.user_id = user_id
         self.username = username
         self.ip = ip
+        self.challenge = challenge
 
 
 class TestLogin(unittest.TestCase):
@@ -54,6 +52,7 @@ class TestLogin(unittest.TestCase):
         hash_mdp = hash_password("admin")
         self.bdd.get_user.return_value = {
             "id": 1, "username": "admin", "password_hash": hash_mdp,
+            "password_sha256": hash_sha256("admin"),
             "role": "admin", "enabled": True,
         }
         resultat = handle_command(self.session, "login admin admin", self.bdd)
@@ -66,6 +65,7 @@ class TestLogin(unittest.TestCase):
         hash_mdp = hash_password("correct")
         self.bdd.get_user.return_value = {
             "id": 1, "username": "user1", "password_hash": hash_mdp,
+            "password_sha256": hash_sha256("correct"),
             "role": "viewer", "enabled": True,
         }
         resultat = handle_command(self.session, "login user1 mauvais", self.bdd)
@@ -83,6 +83,7 @@ class TestLogin(unittest.TestCase):
         """Un login sur un compte desactive doit echouer."""
         self.bdd.get_user.return_value = {
             "id": 2, "username": "bob", "password_hash": hash_password("bob"),
+            "password_sha256": hash_sha256("bob"),
             "role": "viewer", "enabled": False,
         }
         resultat = handle_command(self.session, "login bob bob", self.bdd)
@@ -98,6 +99,43 @@ class TestLogin(unittest.TestCase):
         """Un login avec seulement le username doit afficher l'usage."""
         resultat = handle_command(self.session, "login admin", self.bdd)
         self.assertIn("ERREUR", resultat)
+
+    def test_login_challenge_reussi(self):
+        """Un login challenge-response avec le bon hash doit reussir."""
+        password = "admin"
+        challenge = self.session.challenge
+        sha256_pwd = hash_sha256(password)
+        client_hash = compute_challenge_response(challenge, sha256_pwd)
+        self.bdd.get_user.return_value = {
+            "id": 1, "username": "admin", "password_hash": hash_password(password),
+            "password_sha256": sha256_pwd,
+            "role": "admin", "enabled": True,
+        }
+        resultat = handle_command(self.session, f"login admin CHALL:{client_hash}", self.bdd)
+        self.assertTrue(resultat.startswith("OK"))
+        self.assertTrue(self.session.authenticated)
+
+    def test_login_challenge_echoue(self):
+        """Un login challenge-response avec un mauvais hash doit echouer."""
+        self.bdd.get_user.return_value = {
+            "id": 1, "username": "admin", "password_hash": hash_password("admin"),
+            "password_sha256": hash_sha256("admin"),
+            "role": "admin", "enabled": True,
+        }
+        resultat = handle_command(self.session, "login admin CHALL:mauvais_hash", self.bdd)
+        self.assertIn("ERREUR", resultat)
+        self.assertFalse(self.session.authenticated)
+
+    def test_login_challenge_sans_sha256_stocke(self):
+        """Un login challenge sans password_sha256 en base doit echouer."""
+        self.bdd.get_user.return_value = {
+            "id": 1, "username": "admin", "password_hash": hash_password("admin"),
+            "password_sha256": None,
+            "role": "admin", "enabled": True,
+        }
+        resultat = handle_command(self.session, "login admin CHALL:quelquechose", self.bdd)
+        self.assertIn("ERREUR", resultat)
+        self.assertFalse(self.session.authenticated)
 
     def test_commande_sans_authentification(self):
         """Une commande autre que login sans etre authentifie doit echouer."""
@@ -156,7 +194,7 @@ class TestCreationUtilisateur(unittest.TestCase):
 
     def setUp(self):
         self.bdd = MagicMock()
-        self.bdd.get_user.return_value = None  # pas de doublon par defaut
+        self.bdd.get_user.return_value = None
         self.bdd.create_user.return_value = 2
         self.session = SessionFactice(role="admin")
 
@@ -171,9 +209,8 @@ class TestCreationUtilisateur(unittest.TestCase):
         """Sans role specifie, le role par defaut doit etre 'viewer'."""
         resultat = handle_command(self.session, "users create alice pass123", self.bdd)
         self.assertIn("cree", resultat.lower())
-        # On verifie que le role passe a create_user est bien 'viewer'
         args_appel = self.bdd.create_user.call_args
-        self.assertEqual(args_appel[0][2], "viewer")  # 3eme argument = role
+        self.assertEqual(args_appel[0][2], "viewer")
 
     def test_creation_doublon(self):
         """Creer un utilisateur existant doit echouer."""
@@ -377,9 +414,9 @@ class TestMiseAJourUtilisateur(unittest.TestCase):
         self.assertIn("ERREUR", resultat)
 
     def test_maj_sans_arguments(self):
-        """'users update' sans assez d'arguments doit afficher l'usage."""
+        """'users update bob' sans champ entre dans le contexte utilisateur."""
         resultat = handle_command(self.session, "users update bob", self.bdd)
-        self.assertIn("ERREUR", resultat)
+        self.assertIn("Contexte utilisateur", resultat)
 
     def test_ajout_pki(self):
         """'users update bob addpki ca1' doit assigner la PKI."""

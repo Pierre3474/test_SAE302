@@ -27,6 +27,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # ---------------------------------------------------------------------------
 # 2) IMPORTS STANDARDS
 # ---------------------------------------------------------------------------
+import hashlib      # SHA256 pour challenge-response
 import socket       # Communication TCP avec le serveur
 import argparse     # Parsing des arguments en ligne de commande (-H, -u, -p)
 import getpass      # Saisie masquee du mot de passe
@@ -133,6 +134,7 @@ class PKIClient:
         self.sock = None
         self.username = None
         self.role = None
+        self.challenge = None   # Challenge recu du serveur pour auth
         # Contexte pour le prompt dynamique (ex: pkicli[ca1]#)
         self.context = None     # Nom du contexte actif (ex: "ca1", "bob")
         self.ctx_type = None    # Type : "pki" ou "user"
@@ -173,6 +175,9 @@ class PKIClient:
         hello = self._recv_framed()
         if hello:
             logger.info("RECV: %s", hello)
+            # Extraction du challenge depuis le hello (format: "... CHALL:<hex>")
+            if "CHALL:" in hello:
+                self.challenge = hello.split("CHALL:")[1].strip()
 
     def send_command(self, command: str) -> str:
         """
@@ -279,8 +284,16 @@ class PKIClient:
         """
         self.username = username
 
-        # Envoi de la commande de login
-        response = self.send_command(f"login {username} {password}")
+        # Challenge-response : SHA256(challenge + SHA256(password))
+        if self.challenge:
+            pwd_sha256 = hashlib.sha256(password.encode("utf-8")).hexdigest()
+            response_hash = hashlib.sha256(
+                (self.challenge + pwd_sha256).encode("utf-8")
+            ).hexdigest()
+            response = self.send_command(f"login {username} CHALL:{response_hash}")
+        else:
+            # Fallback : login classique (serveur sans challenge)
+            response = self.send_command(f"login {username} {password}")
         # Ne pas logger la reponse complete (pourrait contenir des infos sensibles)
         logger.info("AUTH: %s", response.split()[0] if response else "pas de reponse")
 

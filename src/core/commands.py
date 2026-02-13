@@ -7,7 +7,8 @@ et appelle les fonctions appropriees.
 
 import logging
 
-from core.auth import hash_password, verify_password, check_permission, check_pki_access
+from core.auth import (hash_password, verify_password, check_permission,
+                       check_pki_access, hash_sha256, verify_challenge)
 from core.logger import audit
 from core import pki_manager
 
@@ -64,7 +65,7 @@ def _handle_login(session, parts: list, db) -> str:
         return "[ERREUR] Usage : login <username> <password>"
 
     username = parts[1]
-    password = parts[2]
+    credential = parts[2]
 
     user = db.get_user(username)
     if not user:
@@ -75,9 +76,22 @@ def _handle_login(session, parts: list, db) -> str:
         audit("LOGIN_FAIL", f"Compte desactive : {username}", ip=session.ip, db=db)
         return "[ERREUR] Compte desactive."
 
-    if not verify_password(user["password_hash"], password):
-        audit("LOGIN_FAIL", f"Mot de passe invalide : {username}", ip=session.ip, db=db)
-        return "[ERREUR] Identifiants invalides."
+    # Challenge-response : format "CHALL:<hash>"
+    if credential.startswith("CHALL:"):
+        client_hash = credential[6:]
+        challenge = getattr(session, "challenge", None)
+        stored_sha256 = user.get("password_sha256")
+        if not challenge or not stored_sha256:
+            audit("LOGIN_FAIL", f"Challenge-response impossible : {username}", ip=session.ip, db=db)
+            return "[ERREUR] Identifiants invalides."
+        if not verify_challenge(challenge, stored_sha256, client_hash):
+            audit("LOGIN_FAIL", f"Challenge-response echoue : {username}", ip=session.ip, db=db)
+            return "[ERREUR] Identifiants invalides."
+    else:
+        # Login classique avec mot de passe en clair (backward compatible)
+        if not verify_password(user["password_hash"], credential):
+            audit("LOGIN_FAIL", f"Mot de passe invalide : {username}", ip=session.ip, db=db)
+            return "[ERREUR] Identifiants invalides."
 
     # Authentification reussie
     session.user_id = user["id"]
@@ -132,7 +146,8 @@ def _handle_users(session, args: list, db) -> str:
         if db.get_user(username):
             return f"[ERREUR] L'utilisateur '{username}' existe deja."
         pw_hash = hash_password(password)
-        uid = db.create_user(username, pw_hash, role)
+        pw_sha256 = hash_sha256(password)
+        uid = db.create_user(username, pw_hash, role, password_sha256=pw_sha256)
         audit("USER_CREATE", f"Cree: {username} (role={role})",
               user_id=session.user_id, ip=session.ip, db=db)
         return f"Utilisateur '{username}' cree (id={uid}, role={role})."
@@ -193,14 +208,17 @@ def _handle_users(session, args: list, db) -> str:
         )
 
     elif sub == "update":
-        if len(args) < 4:
-            return "[ERREUR] Usage : users update <username> <champ> <valeur>"
+        if len(args) < 2:
+            return "[ERREUR] Usage : users update <username> [champ] [valeur]"
         username = args[1]
-        field = args[2].lower()
-        value = args[3]
         user = db.get_user(username)
         if not user:
             return f"[ERREUR] Utilisateur '{username}' introuvable."
+        # Sans champ/valeur : entrer dans le contexte utilisateur
+        if len(args) < 4:
+            return f"Contexte utilisateur '{username}' active."
+        field = args[2].lower()
+        value = args[3]
 
         if field == "role":
             if value not in ("admin", "editor", "viewer"):
@@ -211,7 +229,8 @@ def _handle_users(session, args: list, db) -> str:
             return f"Role de '{username}' mis a jour : {value}."
         elif field == "password":
             pw_hash = hash_password(value)
-            db.update_user(user["id"], password_hash=pw_hash)
+            pw_sha256 = hash_sha256(value)
+            db.update_user(user["id"], password_hash=pw_hash, password_sha256=pw_sha256)
             audit("USER_UPDATE", f"Mot de passe de {username} modifie",
                   user_id=session.user_id, ip=session.ip, db=db)
             return f"Mot de passe de '{username}' mis a jour."
@@ -230,7 +249,93 @@ def _handle_users(session, args: list, db) -> str:
         else:
             return f"[ERREUR] Champ inconnu : {field}. Choix : role, password, addpki, delpki."
 
+    # --- Contexte utilisateur : users ctx <username> <commande> ---
+    elif sub == "ctx":
+        if not check_permission(session.role, "users_ctx"):
+            return "[ERREUR] Permission refusee."
+        if len(args) < 3:
+            return "[ERREUR] Usage : users ctx <username> <add|delete|passwd> [args]"
+        return _handle_users_context(session, args[1], args[2:], db)
+
     return f"[ERREUR] Sous-commande inconnue : users {sub}"
+
+
+def _handle_users_context(session, username: str, args: list, db) -> str:
+    """Traite les commandes dans le contexte utilisateur (pkicli(bob)#)."""
+    user = db.get_user(username)
+    if not user:
+        return f"[ERREUR] Utilisateur '{username}' introuvable."
+
+    cmd = args[0].lower()
+
+    if cmd == "add":
+        # add ca2,ca3 — assigner des PKIs a l'utilisateur
+        if len(args) < 2:
+            return "[ERREUR] Usage : add <pki1,pki2,...>"
+        pki_names = args[1].split(",")
+        results = []
+        for name in pki_names:
+            name = name.strip()
+            if not name:
+                continue
+            pki = db.get_pki(name)
+            if not pki:
+                results.append(f"[ERREUR] PKI '{name}' introuvable.")
+                continue
+            db.assign_user_pki(user["id"], pki["id"])
+            results.append(f"PKI '{name}' assignee a '{username}'.")
+        audit("USER_CTX_ADD", f"PKIs assignees a {username}: {args[1]}",
+              user_id=session.user_id, ip=session.ip, db=db)
+        return "\n".join(results) if results else "Aucune PKI specifiee."
+
+    elif cmd == "delete":
+        # delete ca3 — retirer des PKIs
+        if len(args) < 2:
+            return "[ERREUR] Usage : delete <pki1,pki2,...>"
+        pki_names = args[1].split(",")
+        results = []
+        for name in pki_names:
+            name = name.strip()
+            if not name:
+                continue
+            pki = db.get_pki(name)
+            if not pki:
+                results.append(f"[ERREUR] PKI '{name}' introuvable.")
+                continue
+            db.unassign_user_pki(user["id"], pki["id"])
+            results.append(f"PKI '{name}' retiree de '{username}'.")
+        audit("USER_CTX_DEL", f"PKIs retirees de {username}: {args[1]}",
+              user_id=session.user_id, ip=session.ip, db=db)
+        return "\n".join(results) if results else "Aucune PKI specifiee."
+
+    elif cmd == "passwd":
+        # passwd YYYY — changer le mot de passe
+        if len(args) < 2:
+            return "[ERREUR] Usage : passwd <nouveau_mot_de_passe>"
+        pw_hash = hash_password(args[1])
+        pw_sha256 = hash_sha256(args[1])
+        db.update_user(user["id"], password_hash=pw_hash, password_sha256=pw_sha256)
+        audit("USER_CTX_PASSWD", f"Mot de passe de {username} modifie",
+              user_id=session.user_id, ip=session.ip, db=db)
+        return f"Mot de passe de '{username}' mis a jour."
+
+    elif cmd == "pki":
+        # pki list — lister les PKIs assignees a l'utilisateur
+        if len(args) < 2 or args[1].lower() != "list":
+            return "[ERREUR] Usage : pki list"
+        pki_ids = db.get_user_pkis(user["id"])
+        if not pki_ids:
+            return f"Aucune PKI assignee a '{username}'."
+        pkis = db.list_pkis()
+        visible = [p for p in pkis if p["id"] in pki_ids]
+        if not visible:
+            return f"Aucune PKI assignee a '{username}'."
+        lines = [f"PKI de '{username}' :"]
+        for p in visible:
+            lines.append(f"  {p['name']} — {p['subject']}")
+        return "\n".join(lines)
+
+    return f"[ERREUR] Commande inconnue dans le contexte utilisateur : '{cmd}'. Choix : add, delete, passwd, pki list"
 
 
 # ------------------------------------------------------------------
@@ -268,15 +373,44 @@ def _handle_pki(session, args: list, db) -> str:
         if not check_permission(session.role, "pki_add"):
             return "[ERREUR] Permission refusee (seul admin peut creer des PKI)."
         if len(args) < 3:
-            return "[ERREUR] Usage : pki add <nom> <sujet>"
+            return "[ERREUR] Usage : pki add <nom> <sujet> [algo] [taille] [enc]"
         name = args[1]
-        subject = " ".join(args[2:])
+        subject = args[2]
         if db.get_pki(name):
             return f"[ERREUR] La PKI '{name}' existe deja."
+
+        # Parametres optionnels pour la cle racine
+        algo = None
+        key_size = None
+        encrypted = False
+        remaining = args[3:]
+        for i, arg in enumerate(remaining):
+            if arg.upper() in ("RSA", "EC"):
+                algo = arg.upper()
+                if i + 1 < len(remaining) and remaining[i + 1].lower() not in ("enc",):
+                    key_size = remaining[i + 1]
+            elif arg.lower() == "enc":
+                encrypted = True
+
         pki_id = db.create_pki(name, subject, session.user_id)
-        audit("PKI_ADD", f"PKI creee: {name}",
+        results = [f"PKI '{name}' creee (id={pki_id})."]
+
+        # Si algo specifie, generer la cle racine + CSR + auto-signature
+        if algo:
+            if not key_size:
+                key_size = "2048" if algo == "RSA" else "secp256r1"
+            key_result = pki_manager.generate_key(db, pki_id, name, algo, key_size, encrypted)
+            results.append(key_result)
+            if not key_result.startswith("[ERREUR"):
+                csr_result = pki_manager.generate_csr_server(db, pki_id, name, subject)
+                results.append(csr_result)
+                if not csr_result.startswith("[ERREUR"):
+                    sign_result = pki_manager.sign_certificate(db, pki_id, name, name)
+                    results.append(sign_result)
+
+        audit("PKI_ADD", f"PKI creee: {name}" + (f" ({algo} {key_size})" if algo else ""),
               user_id=session.user_id, ip=session.ip, db=db)
-        return f"PKI '{name}' creee (id={pki_id})."
+        return "\n".join(results)
 
     elif sub == "delete":
         if not check_permission(session.role, "pki_delete"):
@@ -474,14 +608,16 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
     # --- REQ CSR ---
     elif cmd == "req":
         if len(args) < 2 or args[1].lower() != "csr":
-            return "[ERREUR] Usage : req csr <id> <sujet>"
+            return "[ERREUR] Usage : req csr <id> <sujet> [KU=... EKU=... SAN=... CA=...]"
         if not check_permission(session.role, "req_csr"):
             return "[ERREUR] Permission refusee."
         if len(args) < 4:
-            return "[ERREUR] Usage : req csr <id> <sujet>"
+            return "[ERREUR] Usage : req csr <id> <sujet> [KU=... EKU=... SAN=... CA=...]"
         key_name = args[2]
-        subject = " ".join(args[3:])
-        result = pki_manager.generate_csr_server(db, pki_id, key_name, subject)
+        subject = args[3]
+        # Les arguments apres le sujet sont les extensions X.509v3
+        extensions = " ".join(args[4:]) if len(args) > 4 else None
+        result = pki_manager.generate_csr_server(db, pki_id, key_name, subject, extensions)
         if not result.startswith("[ERREUR"):
             audit("CSR_GEN", f"PKI={pki['name']} key={key_name}",
                   user_id=session.user_id, ip=session.ip, db=db)
@@ -536,8 +672,14 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
             return "[ERREUR] Permission refusee."
         if len(args) < 2:
             return "[ERREUR] Usage : rename <nouveau_nom>"
-        # Non implemente en DB (UPDATE pkis SET name = ...)
-        return "[ERREUR] Rename non implemente."
+        new_name = args[1]
+        if db.get_pki(new_name):
+            return f"[ERREUR] La PKI '{new_name}' existe deja."
+        old_name = pki["name"]
+        db.rename_pki(pki["id"], new_name)
+        audit("PKI_RENAME", f"PKI '{old_name}' renommee en '{new_name}'",
+              user_id=session.user_id, ip=session.ip, db=db)
+        return f"PKI renommee : '{old_name}' -> '{new_name}'."
 
     return f"[ERREUR] Commande inconnue dans le contexte PKI : '{cmd}'."
 
@@ -575,14 +717,25 @@ def _help_text() -> str:
 
   --- Utilisateurs (admin) ---
   users list / create / delete / enable / disable / infos / update
+  users ctx <nom>                  Entrer dans le contexte utilisateur
+
+  --- Dans un contexte utilisateur (bob) ---
+  add <pki1,pki2,...>              Assigner des PKI
+  delete <pki1,pki2,...>           Retirer des PKI
+  passwd <nouveau_mdp>             Changer le mot de passe
 
   --- PKI ---
   pki list / add / delete / infos / dump / update
 
   --- Dans un contexte PKI ---
-  keygen <id> <algo> <taille>    list keys / csr / crt
-  show privkey/pubkey/csr/crt    keypem / csrpem / crtpem
-  req csr <id> <sujet>           sign crt <id> <ca>
-  revoke <id>                    crlgen <ca> [jours]
+  keygen <id> <algo> <taille> [enc]
+  list keys / csr / crt
+  show privkey/pubkey/csr/crt <id>
+  keypem / csrpem / crtpem <id>
+  req csr <id> <sujet> [KU=DS,KE EKU=SRV SAN=DNS:xxx CA=TRUE]
+  sign crt <id> <ca> [jours]
+  revoke <id>
+  crlgen <ca> [jours]
+  rename <nouveau_nom>
 
   bye — Quitter"""

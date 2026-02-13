@@ -75,20 +75,21 @@ class Database:
         """Recupere un utilisateur par son nom."""
         with self.cursor(commit=False) as cur:
             cur.execute(
-                "SELECT id, username, password_hash, role, enabled "
+                "SELECT id, username, password_hash, password_sha256, role, enabled "
                 "FROM users WHERE username = %s",
                 (username,),
             )
             row = cur.fetchone()
             return dict(row) if row else None
 
-    def create_user(self, username: str, password_hash: str, role: str = "viewer") -> int:
+    def create_user(self, username: str, password_hash: str, role: str = "viewer",
+                    password_sha256: str | None = None) -> int:
         """Cree un utilisateur et renvoie son id."""
         with self.cursor() as cur:
             cur.execute(
-                "INSERT INTO users (username, password_hash, role) "
-                "VALUES (%s, %s, %s) RETURNING id",
-                (username, password_hash, role),
+                "INSERT INTO users (username, password_hash, password_sha256, role) "
+                "VALUES (%s, %s, %s, %s) RETURNING id",
+                (username, password_hash, password_sha256, role),
             )
             return cur.fetchone()["id"]
 
@@ -111,7 +112,7 @@ class Database:
 
     def update_user(self, user_id: int, **fields) -> bool:
         """Met a jour un utilisateur (role, enabled, password_hash)."""
-        allowed = {"role", "enabled", "password_hash"}
+        allowed = {"role", "enabled", "password_hash", "password_sha256"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return False
@@ -158,6 +159,12 @@ class Database:
         """Supprime une PKI (cascade sur keys, csrs, certs, crls)."""
         with self.cursor() as cur:
             cur.execute("DELETE FROM pkis WHERE id = %s", (pki_id,))
+            return cur.rowcount > 0
+
+    def rename_pki(self, pki_id: int, new_name: str) -> bool:
+        """Renomme une PKI."""
+        with self.cursor() as cur:
+            cur.execute("UPDATE pkis SET name = %s WHERE id = %s", (new_name, pki_id))
             return cur.rowcount > 0
 
     def get_user_pkis(self, user_id: int) -> list[int]:

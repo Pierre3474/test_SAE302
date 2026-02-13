@@ -13,6 +13,7 @@ keys/
 # Python
 __pycache__/
 *.pyc
+venv/
 
 # Tests / pytest
 .pytest_cache/

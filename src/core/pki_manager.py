@@ -49,7 +49,7 @@ _EKU_MAP = {
 
 
 def generate_key(db, pki_id: int, key_name: str, algorithm: str = "RSA",
-                 key_size: str = "2048", encrypted: bool = False) -> str:
+                 key_size: str = "2048", encrypted: bool = False) -> str:  # noqa: E501
     """
     Genere une paire de cles et la stocke en DB.
 

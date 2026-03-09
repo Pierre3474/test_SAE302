@@ -5,10 +5,13 @@ Recoit les commandes texte du client, verifie les permissions,
 et appelle les fonctions appropriees.
 """
 
+from __future__ import annotations
+
 import logging
 
 from core.auth import (hash_password, verify_password, check_permission,
-                       check_pki_access, hash_sha256, verify_challenge)
+                       check_pki_access, hash_sha256, verify_challenge,
+                       generate_totp_secret, verify_totp, get_totp_uri)
 from core.logger import audit
 from core import pki_manager
 
@@ -37,10 +40,18 @@ def handle_command(session, command: str, db) -> str:
     if cmd == "login":
         return _handle_login(session, parts, db)
 
+    # --- OTP (apres login, si TOTP actif) ---
+    if cmd == "otp":
+        return _handle_otp(session, parts, db)
+
     # --- BYE ---
     if cmd == "bye":
         audit("BYE", user_id=session.user_id, ip=session.ip, db=db)
         return "Au revoir."
+
+    # --- Si en attente OTP, bloquer toute autre commande ---
+    if getattr(session, "totp_pending", False):
+        return "[ERREUR] Authentification incomplete. Envoyez: otp <code_6_chiffres>"
 
     # --- Commandes authentifiees ---
     if not session.authenticated:
@@ -50,10 +61,66 @@ def handle_command(session, command: str, db) -> str:
         return _handle_users(session, parts[1:], db)
     elif cmd == "pki":
         return _handle_pki(session, parts[1:], db)
+    elif cmd == "logs":
+        return _handle_logs(session, parts[1:], db)
+    elif cmd == "whoami":
+        return _handle_whoami(session, db)
     elif cmd == "help":
         return _help_text()
     else:
         return f"[ERREUR] Commande inconnue : '{cmd}'. Tapez 'help' pour l'aide."
+
+
+# ------------------------------------------------------------------
+#  LOGS
+# ------------------------------------------------------------------
+
+def _handle_whoami(session, db) -> str:
+    """Affiche les informations de la session courante."""
+    lines = [
+        f"Utilisateur : {session.username}",
+        f"Role        : {session.role}",
+        f"IP          : {session.ip}",
+    ]
+    try:
+        pki_ids = db.get_user_pkis(session.user_id)
+        if pki_ids:
+            pkis = db.list_pkis()
+            names = [p["name"] for p in pkis if p["id"] in pki_ids]
+            lines.append(f"PKI acces   : {', '.join(names) if names else '(aucune)'}")
+        else:
+            lines.append("PKI acces   : toutes (admin)" if session.role == "admin" else "(aucune)")
+        user = db.get_user(session.username) or {}
+        totp = "active" if user.get("totp_enabled") else "desactive"
+        lines.append(f"2FA (TOTP)  : {totp}")
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
+def _handle_logs(session, args: list, db) -> str:
+    """Affiche les derniers logs d'audit (admin uniquement)."""
+    if not check_permission(session.role, "users_list"):  # admin only
+        return "[ERREUR] Permission refusee (admin uniquement)."
+    limit = 50
+    if args and args[0].isdigit():
+        limit = min(int(args[0]), 500)
+    try:
+        logs = db.get_recent_logs(limit)
+    except Exception:
+        return "[ERREUR] Impossible de lire les logs (base de donnees inaccessible)."
+    if not logs:
+        return "Aucun log."
+    lines = ["Timestamp | User | IP | Action | Details"]
+    lines.append("-" * 80)
+    for l in logs:
+        ts = str(l.get("timestamp", ""))[:19]
+        user = str(l.get("username") or "—")[:15]
+        ip = str(l.get("ip_address") or "—")[:15]
+        action = str(l.get("action", ""))[:20]
+        details = str(l.get("details") or "")[:40]
+        lines.append(f"{ts} | {user:<15} | {ip:<15} | {action:<20} | {details}")
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------
@@ -76,34 +143,128 @@ def _handle_login(session, parts: list, db) -> str:
         audit("LOGIN_FAIL", f"Compte desactive : {username}", ip=session.ip, db=db)
         return "[ERREUR] Compte desactive."
 
+    # Verifier si le compte est verrouille (brute-force protection)
+    try:
+        locked = db.is_account_locked(username)
+        if locked is True:  # comparaison stricte pour eviter les faux positifs (MagicMock)
+            audit("LOGIN_LOCKED", f"Compte verrouille : {username}", ip=session.ip, db=db)
+            return "[ERREUR] Compte temporairement verrouille. Reessayez dans 15 minutes."
+    except Exception:
+        pass  # si la colonne n'existe pas encore (ancienne DB), on continue
+
     # Challenge-response : format "CHALL:<hash>"
+    auth_ok = False
     if credential.startswith("CHALL:"):
         client_hash = credential[6:]
         challenge = getattr(session, "challenge", None)
         stored_sha256 = user.get("password_sha256")
-        if not challenge or not stored_sha256:
-            audit("LOGIN_FAIL", f"Challenge-response impossible : {username}", ip=session.ip, db=db)
-            return "[ERREUR] Identifiants invalides."
-        if not verify_challenge(challenge, stored_sha256, client_hash):
+        if challenge and stored_sha256 and verify_challenge(challenge, stored_sha256, client_hash):
+            auth_ok = True
+        else:
             audit("LOGIN_FAIL", f"Challenge-response echoue : {username}", ip=session.ip, db=db)
-            return "[ERREUR] Identifiants invalides."
     else:
         # Login classique avec mot de passe en clair (backward compatible)
-        if not verify_password(user["password_hash"], credential):
+        if verify_password(user["password_hash"], credential):
+            auth_ok = True
+        else:
             audit("LOGIN_FAIL", f"Mot de passe invalide : {username}", ip=session.ip, db=db)
+
+    if not auth_ok:
+        try:
+            attempts = db.record_failed_login(username)
+            remaining = max(0, db.MAX_FAILED_ATTEMPTS - attempts)
+            if remaining == 0:
+                return "[ERREUR] Identifiants invalides. Compte verrouille pour 15 minutes."
+            return f"[ERREUR] Identifiants invalides. ({remaining} tentative(s) restante(s))"
+        except Exception:
             return "[ERREUR] Identifiants invalides."
 
-    # Authentification reussie
+    # --- Verifier si TOTP est active ---
+    if user.get("totp_enabled") and user.get("totp_secret"):
+        session.totp_pending = True
+        session._pending_user = user
+        audit("LOGIN_OTP_PENDING", f"Attente OTP : {username}", ip=session.ip, db=db)
+        return "OTP_REQUIRED"
+
+    # Authentification complete (sans TOTP)
+    _finalize_login(session, user, db)
+    warnings = _check_expiry_warnings(session, db)
+    if warnings:
+        return f"OK {user['role']}\n{warnings}"
+    return f"OK {user['role']}"
+
+
+def _handle_otp(session, parts: list, db) -> str:
+    """Verifie le code OTP apres une authentification par mot de passe."""
+    if not getattr(session, "totp_pending", False):
+        return "[ERREUR] Aucune authentification OTP en cours."
+
+    if len(parts) < 2:
+        return "[ERREUR] Usage : otp <code_6_chiffres>"
+
+    code = parts[1].strip()
+    user = session._pending_user
+
+    if not verify_totp(user["totp_secret"], code):
+        session.totp_pending = False
+        session._pending_user = None
+        audit("LOGIN_FAIL_OTP", f"Code OTP invalide : {user['username']}", ip=session.ip, db=db)
+        return "[ERREUR] Code OTP invalide. Reconnectez-vous."
+
+    # OTP valide
+    session.totp_pending = False
+    session._pending_user = None
+    _finalize_login(session, user, db)
+    warnings = _check_expiry_warnings(session, db)
+    if warnings:
+        return f"OK {user['role']}\n{warnings}"
+    return f"OK {user['role']}"
+
+
+def _check_expiry_warnings(session, db) -> str:
+    """Verifie les certificats qui expirent bientot (< 30 jours) ou deja expires."""
+    from datetime import datetime, timezone, timedelta
+    warnings = []
+    try:
+        soon = datetime.now(tz=timezone.utc) + timedelta(days=30)
+        now  = datetime.now(tz=timezone.utc)
+        pki_ids = [p["id"] for p in db.list_pkis()] if session.role == "admin" \
+                  else db.get_user_pkis(session.user_id)
+        for pki_id in pki_ids:
+            for cert in db.list_certificates(pki_id):
+                if cert.get("revoked"):
+                    continue
+                not_after = cert.get("not_after")
+                if not_after is None:
+                    continue
+                # Normaliser en datetime aware si necessaire
+                if hasattr(not_after, "tzinfo") and not_after.tzinfo is None:
+                    not_after = not_after.replace(tzinfo=timezone.utc)
+                days_left = (not_after - now).days
+                if days_left < 0:
+                    warnings.append(f"  [EXPIRE]         {cert['key_name']} expire depuis {-days_left}j")
+                elif not_after <= soon:
+                    warnings.append(f"  [EXPIRE BIENTOT] {cert['key_name']} expire dans {days_left}j")
+    except Exception:
+        pass
+    if not warnings:
+        return ""
+    return "\n[AVERTISSEMENT] Certificats a renouveler :\n" + "\n".join(warnings)
+
+
+def _finalize_login(session, user: dict, db) -> None:
+    """Finalise l'authentification et met a jour la session."""
     session.user_id = user["id"]
     session.username = user["username"]
     session.role = user["role"]
     session.authenticated = True
-
     db.update_last_login(user["id"])
-    audit("LOGIN", f"Connexion reussie : {username} ({user['role']})",
+    try:
+        db.reset_failed_login(user["id"])
+    except Exception:
+        pass
+    audit("LOGIN", f"Connexion reussie : {user['username']} ({user['role']})",
           user_id=user["id"], ip=session.ip, db=db)
-
-    return f"OK {user['role']}"
 
 
 # ------------------------------------------------------------------
@@ -112,10 +273,33 @@ def _handle_login(session, parts: list, db) -> str:
 
 def _handle_users(session, args: list, db) -> str:
     if not args:
-        return "[ERREUR] Usage : users <list|create|delete|enable|disable|infos|update>"
+        return "[ERREUR] Usage : users <list|create|delete|enable|disable|infos|update|totp|unlock>"
 
     sub = args[0].lower()
     action = f"users_{sub}"
+
+    # Sous-commandes a traitement special (permission explicite)
+    if sub == "totp":
+        if not check_permission(session.role, "users_update"):
+            return "[ERREUR] Permission refusee (admin uniquement)."
+        return _handle_users_totp(session, args[1:], db)
+
+    if sub == "unlock":
+        if not check_permission(session.role, "users_update"):
+            return "[ERREUR] Permission refusee (admin uniquement)."
+        if len(args) < 2:
+            return "[ERREUR] Usage : users unlock <username>"
+        username = args[1]
+        user = db.get_user(username)
+        if not user:
+            return f"[ERREUR] Utilisateur '{username}' introuvable."
+        try:
+            db.reset_failed_login(user["id"])
+        except Exception as e:
+            return f"[ERREUR] Impossible de deverrouiller : {e}"
+        audit("USER_UNLOCK", f"Compte deverrouille : {username}",
+              user_id=session.user_id, ip=session.ip, db=db)
+        return f"Compte '{username}' deverrouille (tentatives remises a zero)."
 
     if not check_permission(session.role, action):
         return f"[ERREUR] Permission refusee ({session.role} ne peut pas {action})."
@@ -124,13 +308,14 @@ def _handle_users(session, args: list, db) -> str:
         users = db.list_users()
         if not users:
             return "Aucun utilisateur."
-        lines = ["ID | Username | Role | Actif | Derniere connexion"]
-        lines.append("-" * 60)
+        lines = ["ID | Username | Role | Actif | 2FA | Derniere connexion"]
+        lines.append("-" * 65)
         for u in users:
             last = str(u["last_login"])[:19] if u["last_login"] else "jamais"
+            totp = "oui" if u.get("totp_enabled") else "non"
             lines.append(
                 f"{u['id']:3d} | {u['username']:<15s} | {u['role']:<7s} | "
-                f"{'oui' if u['enabled'] else 'non':5s} | {last}"
+                f"{'oui' if u['enabled'] else 'non':5s} | {totp:3s} | {last}"
             )
         return "\n".join(lines)
 
@@ -142,7 +327,6 @@ def _handle_users(session, args: list, db) -> str:
         role = args[3] if len(args) > 3 else "viewer"
         if role not in ("admin", "editor", "viewer"):
             return f"[ERREUR] Role invalide : {role}. Choix : admin, editor, viewer."
-        # Verifier doublon
         if db.get_user(username):
             return f"[ERREUR] L'utilisateur '{username}' existe deja."
         pw_hash = hash_password(password)
@@ -198,11 +382,20 @@ def _handle_users(session, args: list, db) -> str:
             return f"[ERREUR] Utilisateur '{args[1]}' introuvable."
         last = str(user.get("last_login", ""))[:19] if user.get("last_login") else "jamais"
         pkis = db.get_user_pkis(user["id"])
+        # Recuperer info TOTP (deja dans get_user depuis la mise a jour)
+        totp_status = "active" if user.get("totp_enabled") else "desactive"
+        failed = user.get("failed_attempts", 0) or 0
+        locked = user.get("locked_until")
+        lock_status = f"verrouille jusqu'a {str(locked)[:19]}" if locked else (
+            f"{failed} echec(s)" if failed else "aucun"
+        )
         return (
             f"Utilisateur : {user['username']}\n"
             f"  ID: {user['id']}\n"
             f"  Role: {user['role']}\n"
             f"  Actif: {'oui' if user['enabled'] else 'non'}\n"
+            f"  2FA (TOTP): {totp_status}\n"
+            f"  Tentatives echouees: {lock_status}\n"
             f"  Derniere connexion: {last}\n"
             f"  PKI associees: {pkis if pkis else 'aucune'}"
         )
@@ -214,7 +407,6 @@ def _handle_users(session, args: list, db) -> str:
         user = db.get_user(username)
         if not user:
             return f"[ERREUR] Utilisateur '{username}' introuvable."
-        # Sans champ/valeur : entrer dans le contexte utilisateur
         if len(args) < 4:
             return f"Contexte utilisateur '{username}' active."
         field = args[2].lower()
@@ -249,7 +441,6 @@ def _handle_users(session, args: list, db) -> str:
         else:
             return f"[ERREUR] Champ inconnu : {field}. Choix : role, password, addpki, delpki."
 
-    # --- Contexte utilisateur : users ctx <username> <commande> ---
     elif sub == "ctx":
         if not check_permission(session.role, "users_ctx"):
             return "[ERREUR] Permission refusee."
@@ -258,6 +449,79 @@ def _handle_users(session, args: list, db) -> str:
         return _handle_users_context(session, args[1], args[2:], db)
 
     return f"[ERREUR] Sous-commande inconnue : users {sub}"
+
+
+def _handle_users_totp(session, args: list, db) -> str:
+    """Gere les commandes TOTP : setup, enable, disable, status."""
+    if not args:
+        return (
+            "Gestion TOTP (Multi-Factor Authentication) :\n"
+            "  users totp setup <username>   — Generer un secret TOTP\n"
+            "  users totp enable <username>  — Activer le 2FA\n"
+            "  users totp disable <username> — Desactiver le 2FA\n"
+            "  users totp status <username>  — Statut du 2FA"
+        )
+
+    sub = args[0].lower()
+
+    if len(args) < 2:
+        return f"[ERREUR] Usage : users totp {sub} <username>"
+
+    username = args[1]
+    user = db.get_user(username)
+    if not user:
+        return f"[ERREUR] Utilisateur '{username}' introuvable."
+
+    if sub == "setup":
+        secret = generate_totp_secret()
+        uri = get_totp_uri(secret, username)
+        db.set_totp(user["id"], secret, enabled=False)
+        audit("TOTP_SETUP", f"Secret TOTP genere pour {username}",
+              user_id=session.user_id, ip=session.ip, db=db)
+        qr_str = ""
+        try:
+            import qrcode
+            import io
+            qr = qrcode.QRCode(border=1)
+            qr.add_data(uri)
+            qr.make(fit=True)
+            buf = io.StringIO()
+            qr.print_ascii(out=buf)
+            qr_str = "\n" + buf.getvalue()
+        except Exception:
+            pass
+        return (
+            f"Secret TOTP genere pour '{username}'.\n"
+            f"  Secret (base32) : {secret}\n"
+            f"  URI FreeOTP     : {uri}\n"
+            f"{qr_str}"
+            f"  → Scannez le QR code avec FreeOTP ou Google Authenticator.\n"
+            f"  → Activez ensuite avec : users totp enable {username}"
+        )
+
+    elif sub == "enable":
+        user_full = db.get_user(username) or {}
+        if not user_full.get("totp_secret"):
+            return f"[ERREUR] Aucun secret TOTP pour '{username}'. Faites d'abord : users totp setup {username}"
+        db.set_totp(user["id"], user_full["totp_secret"], enabled=True)
+        audit("TOTP_ENABLE", f"2FA active pour {username}",
+              user_id=session.user_id, ip=session.ip, db=db)
+        return f"2FA (TOTP) active pour '{username}'."
+
+    elif sub == "disable":
+        db.set_totp(user["id"], None, enabled=False)
+        audit("TOTP_DISABLE", f"2FA desactive pour {username}",
+              user_id=session.user_id, ip=session.ip, db=db)
+        return f"2FA (TOTP) desactive pour '{username}'."
+
+    elif sub == "status":
+        user_full = db.get_user(username) or {}
+        enabled = user_full.get("totp_enabled", False)
+        has_secret = bool(user_full.get("totp_secret"))
+        status = "ACTIVE" if enabled else ("configure (non active)" if has_secret else "non configure")
+        return f"2FA de '{username}' : {status}"
+
+    return f"[ERREUR] Sous-commande TOTP inconnue : {sub}. Choix : setup, enable, disable, status"
 
 
 def _handle_users_context(session, username: str, args: list, db) -> str:
@@ -269,7 +533,6 @@ def _handle_users_context(session, username: str, args: list, db) -> str:
     cmd = args[0].lower()
 
     if cmd == "add":
-        # add ca2,ca3 — assigner des PKIs a l'utilisateur
         if len(args) < 2:
             return "[ERREUR] Usage : add <pki1,pki2,...>"
         pki_names = args[1].split(",")
@@ -289,7 +552,6 @@ def _handle_users_context(session, username: str, args: list, db) -> str:
         return "\n".join(results) if results else "Aucune PKI specifiee."
 
     elif cmd == "delete":
-        # delete ca3 — retirer des PKIs
         if len(args) < 2:
             return "[ERREUR] Usage : delete <pki1,pki2,...>"
         pki_names = args[1].split(",")
@@ -309,7 +571,6 @@ def _handle_users_context(session, username: str, args: list, db) -> str:
         return "\n".join(results) if results else "Aucune PKI specifiee."
 
     elif cmd == "passwd":
-        # passwd YYYY — changer le mot de passe
         if len(args) < 2:
             return "[ERREUR] Usage : passwd <nouveau_mot_de_passe>"
         pw_hash = hash_password(args[1])
@@ -320,7 +581,6 @@ def _handle_users_context(session, username: str, args: list, db) -> str:
         return f"Mot de passe de '{username}' mis a jour."
 
     elif cmd == "pki":
-        # pki list — lister les PKIs assignees a l'utilisateur
         if len(args) < 2 or args[1].lower() != "list":
             return "[ERREUR] Usage : pki list"
         pki_ids = db.get_user_pkis(user["id"])
@@ -348,7 +608,6 @@ def _handle_pki(session, args: list, db) -> str:
 
     sub = args[0].lower()
 
-    # --- Commandes sans contexte PKI ---
     if sub == "list":
         if not check_permission(session.role, "pki_list"):
             return "[ERREUR] Permission refusee."
@@ -379,7 +638,6 @@ def _handle_pki(session, args: list, db) -> str:
         if db.get_pki(name):
             return f"[ERREUR] La PKI '{name}' existe deja."
 
-        # Parametres optionnels pour la cle racine
         algo = None
         key_size = None
         encrypted = False
@@ -395,7 +653,6 @@ def _handle_pki(session, args: list, db) -> str:
         pki_id = db.create_pki(name, subject, session.user_id)
         results = [f"PKI '{name}' creee (id={pki_id})."]
 
-        # Si algo specifie, generer la cle racine + CSR + auto-signature
         if algo:
             if not key_size:
                 key_size = "2048" if algo == "RSA" else "secp256r1"
@@ -445,6 +702,18 @@ def _handle_pki(session, args: list, db) -> str:
             f"  Cree le: {str(pki['created_at'])[:19]}"
         )
 
+    elif sub == "tree":
+        if not check_permission(session.role, "pki_infos"):
+            return "[ERREUR] Permission refusee."
+        if len(args) < 2:
+            return "[ERREUR] Usage : pki tree <nom>"
+        pki = db.get_pki(args[1])
+        if not pki:
+            return f"[ERREUR] PKI '{args[1]}' introuvable."
+        if not check_pki_access(db, session.user_id, pki["id"], session.role):
+            return "[ERREUR] Acces refuse a cette PKI."
+        return _pki_tree(db, pki)
+
     elif sub == "dump":
         if not check_permission(session.role, "pki_dump"):
             return "[ERREUR] Permission refusee."
@@ -457,7 +726,6 @@ def _handle_pki(session, args: list, db) -> str:
             return "[ERREUR] Acces refuse a cette PKI."
         return _dump_pki(db, pki)
 
-    # --- Commandes dans un contexte PKI (pki ctx <nom> <sous-commande>) ---
     elif sub == "ctx":
         if len(args) < 3:
             return "[ERREUR] Contexte PKI invalide."
@@ -492,7 +760,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
     cmd = args[0].lower()
     pki_id = pki["id"]
 
-    # --- KEYGEN ---
     if cmd == "keygen":
         if not check_permission(session.role, "keygen"):
             return "[ERREUR] Permission refusee."
@@ -508,7 +775,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
                   user_id=session.user_id, ip=session.ip, db=db)
         return result
 
-    # --- LIST ---
     elif cmd == "list":
         if len(args) < 2:
             return "[ERREUR] Usage : list <keys|csr|crt>"
@@ -559,7 +825,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
             return "\n".join(lines)
         return f"[ERREUR] Type inconnu : {what}. Choix : keys, csr, crt."
 
-    # --- SHOW ---
     elif cmd == "show":
         if len(args) < 3:
             return "[ERREUR] Usage : show <privkey|pubkey|csr|crt> <id>"
@@ -583,7 +848,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
             return pki_manager.get_cert_info(db, pki_id, key_name)
         return f"[ERREUR] Type inconnu : {what}."
 
-    # --- PEM export ---
     elif cmd == "keypem":
         if not check_permission(session.role, "keypem"):
             return "[ERREUR] Permission refusee."
@@ -605,7 +869,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
             return "[ERREUR] Usage : crtpem <id>"
         return pki_manager.get_cert_info(db, pki_id, args[1], pem=True)
 
-    # --- REQ CSR ---
     elif cmd == "req":
         if len(args) < 2 or args[1].lower() != "csr":
             return "[ERREUR] Usage : req csr <id> <sujet> [KU=... EKU=... SAN=... CA=...]"
@@ -615,7 +878,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
             return "[ERREUR] Usage : req csr <id> <sujet> [KU=... EKU=... SAN=... CA=...]"
         key_name = args[2]
         subject = args[3]
-        # Les arguments apres le sujet sont les extensions X.509v3
         extensions = " ".join(args[4:]) if len(args) > 4 else None
         result = pki_manager.generate_csr_server(db, pki_id, key_name, subject, extensions)
         if not result.startswith("[ERREUR"):
@@ -623,7 +885,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
                   user_id=session.user_id, ip=session.ip, db=db)
         return result
 
-    # --- SIGN CRT ---
     elif cmd == "sign":
         if len(args) < 2 or args[1].lower() != "crt":
             return "[ERREUR] Usage : sign crt <id> <ca_id> [jours]"
@@ -640,7 +901,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
                   user_id=session.user_id, ip=session.ip, db=db)
         return result
 
-    # --- REVOKE ---
     elif cmd == "revoke":
         if not check_permission(session.role, "revoke"):
             return "[ERREUR] Permission refusee."
@@ -652,7 +912,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
                   user_id=session.user_id, ip=session.ip, db=db)
         return result
 
-    # --- CRLGEN ---
     elif cmd == "crlgen":
         if not check_permission(session.role, "crlgen"):
             return "[ERREUR] Permission refusee."
@@ -666,7 +925,6 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
                   user_id=session.user_id, ip=session.ip, db=db)
         return result
 
-    # --- RENAME ---
     elif cmd == "rename":
         if not check_permission(session.role, "pki_rename"):
             return "[ERREUR] Permission refusee."
@@ -682,6 +940,70 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
         return f"PKI renommee : '{old_name}' -> '{new_name}'."
 
     return f"[ERREUR] Commande inconnue dans le contexte PKI : '{cmd}'."
+
+
+def _pki_tree(db, pki: dict) -> str:
+    """Affiche l'arbre de certification ASCII d'une PKI."""
+    from datetime import datetime, timezone
+    now = datetime.now(tz=timezone.utc)
+    certs = db.list_certificates(pki["id"])
+    keys  = db.list_keys(pki["id"])
+
+    # Index des cles par nom
+    key_info = {k["key_name"]: k for k in keys}
+
+    # Index des certs par id
+    cert_by_id = {c["id"]: c for c in certs}
+
+    # Trouver les racines (issuer_cert_id == NULL ou pointe sur lui-meme)
+    roots = [c for c in certs if not c.get("issuer_cert_id") or
+             c.get("issuer_cert_id") == c["id"]]
+    children = {}
+    for c in certs:
+        pid = c.get("issuer_cert_id")
+        if pid and pid != c["id"]:
+            children.setdefault(pid, []).append(c)
+
+    lines = [f"PKI : {pki['name']}  ({pki['subject']})"]
+    lines.append("")
+
+    def _format_cert(c: dict) -> str:
+        k = key_info.get(c["key_name"], {})
+        algo = f"{k.get('algorithm','?')} {k.get('key_size','')}" if k else "?"
+        not_after = c.get("not_after")
+        if not_after:
+            if hasattr(not_after, "tzinfo") and not_after.tzinfo is None:
+                not_after = not_after.replace(tzinfo=timezone.utc)
+            days = (not_after - now).days
+            if c.get("revoked"):
+                expiry = "REVOQUE"
+            elif days < 0:
+                expiry = f"EXPIRE depuis {-days}j"
+            elif days < 30:
+                expiry = f"expire dans {days}j !"
+            else:
+                expiry = f"valide {days}j"
+        else:
+            expiry = "?"
+        return f"{c['key_name']}  [{algo}]  {expiry}"
+
+    def _render(cert_list: list, prefix: str = "") -> None:
+        for i, c in enumerate(cert_list):
+            is_last = (i == len(cert_list) - 1)
+            connector = "└── " if is_last else "├── "
+            lines.append(f"{prefix}{connector}{_format_cert(c)}")
+            sub = children.get(c["id"], [])
+            if sub:
+                ext = "    " if is_last else "│   "
+                _render(sub, prefix + ext)
+
+    if not roots:
+        return f"PKI '{pki['name']}' : aucun certificat."
+
+    _render(roots)
+    lines.append("")
+    lines.append(f"  Total : {len(certs)} certificat(s), {len(keys)} cle(s)")
+    return "\n".join(lines)
 
 
 def _dump_pki(db, pki: dict) -> str:
@@ -718,6 +1040,8 @@ def _help_text() -> str:
   --- Utilisateurs (admin) ---
   users list / create / delete / enable / disable / infos / update
   users ctx <nom>                  Entrer dans le contexte utilisateur
+  users totp setup/enable/disable/status <nom>  Gestion 2FA
+  users unlock <nom>                            Deverrouiller un compte (brute-force)
 
   --- Dans un contexte utilisateur (bob) ---
   add <pki1,pki2,...>              Assigner des PKI

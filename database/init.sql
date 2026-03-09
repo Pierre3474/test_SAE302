@@ -21,7 +21,11 @@ CREATE TABLE users (
                     CHECK (role IN ('admin', 'editor', 'viewer')),
     enabled         BOOLEAN DEFAULT TRUE,
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    last_login      TIMESTAMP WITH TIME ZONE
+    last_login      TIMESTAMP WITH TIME ZONE,
+    totp_secret      TEXT,
+    totp_enabled     BOOLEAN DEFAULT FALSE,
+    failed_attempts  INTEGER DEFAULT 0,
+    locked_until     TIMESTAMP WITH TIME ZONE
 );
 
 CREATE INDEX idx_users_username ON users(username);

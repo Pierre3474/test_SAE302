@@ -72,10 +72,11 @@ class Database:
     # ------------------------------------------------------------------
 
     def get_user(self, username: str) -> dict | None:
-        """Recupere un utilisateur par son nom."""
+        """Recupere un utilisateur par son nom (inclut les colonnes TOTP)."""
         with self.cursor(commit=False) as cur:
             cur.execute(
-                "SELECT id, username, password_hash, password_sha256, role, enabled "
+                "SELECT id, username, password_hash, password_sha256, role, enabled, "
+                "totp_secret, totp_enabled, failed_attempts, locked_until "
                 "FROM users WHERE username = %s",
                 (username,),
             )
@@ -369,3 +370,95 @@ class Database:
                 "VALUES (%s, %s, %s, %s)",
                 (user_id, ip_address, action, details),
             )
+
+    def get_recent_logs(self, limit: int = 100) -> list[dict]:
+        """Recupere les derniers evenements d'audit."""
+        with self.cursor(commit=False) as cur:
+            cur.execute(
+                "SELECT l.id, l.timestamp, u.username, l.ip_address, l.action, l.details "
+                "FROM logs l "
+                "LEFT JOIN users u ON l.user_id = u.id "
+                "ORDER BY l.timestamp DESC LIMIT %s",
+                (limit,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    #  TOTP
+    # ------------------------------------------------------------------
+
+    def set_totp(self, user_id: int, secret: str, enabled: bool = False) -> None:
+        """Stocke ou met a jour le secret TOTP d'un utilisateur."""
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET totp_secret = %s, totp_enabled = %s WHERE id = %s",
+                (secret, enabled, user_id),
+            )
+
+    def get_user_by_id(self, user_id: int) -> dict | None:
+        """Recupere un utilisateur par son id."""
+        with self.cursor(commit=False) as cur:
+            cur.execute(
+                "SELECT id, username, totp_secret, totp_enabled FROM users WHERE id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    #  Verrouillage de compte (brute-force protection)
+    # ------------------------------------------------------------------
+
+    MAX_FAILED_ATTEMPTS = 5   # tentatives avant blocage
+    LOCKOUT_MINUTES     = 15  # duree du blocage en minutes
+
+    def record_failed_login(self, username: str) -> int:
+        """Incremente le compteur d'echecs et verrouille si seuil atteint.
+        Retourne le nombre de tentatives apres incrementation."""
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET failed_attempts = failed_attempts + 1, "
+                "locked_until = CASE "
+                "  WHEN failed_attempts + 1 >= %s "
+                "  THEN CURRENT_TIMESTAMP + INTERVAL '%s minutes' "
+                "  ELSE locked_until "
+                "END "
+                "WHERE username = %s "
+                "RETURNING failed_attempts",
+                (self.MAX_FAILED_ATTEMPTS, self.LOCKOUT_MINUTES, username),
+            )
+            row = cur.fetchone()
+            return row["failed_attempts"] if row else 0
+
+    def reset_failed_login(self, user_id: int) -> None:
+        """Remet a zero le compteur d'echecs apres un login reussi."""
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = %s",
+                (user_id,),
+            )
+
+    def is_account_locked(self, username: str) -> bool:
+        """Retourne True si le compte est actuellement verrouille."""
+        with self.cursor(commit=False) as cur:
+            cur.execute(
+                "SELECT locked_until FROM users WHERE username = %s",
+                (username,),
+            )
+            row = cur.fetchone()
+            if not row or not row["locked_until"]:
+                return False
+            from datetime import timezone
+            now = __import__("datetime").datetime.now(tz=timezone.utc)
+            return row["locked_until"] > now
+
+    def get_user_full(self, username: str) -> dict | None:
+        """Recupere un utilisateur avec toutes ses colonnes (y compris TOTP)."""
+        with self.cursor(commit=False) as cur:
+            cur.execute(
+                "SELECT id, username, password_hash, password_sha256, role, enabled, "
+                "totp_secret, totp_enabled FROM users WHERE username = %s",
+                (username,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None

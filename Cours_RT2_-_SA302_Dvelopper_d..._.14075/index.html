@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Moodle didex BUT - RT2 - SAé302 Développer des applications communicantes</title>
+    <link rel="stylesheet" type="text/css" href=".//shared/moodle.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+</head>
+<body>
+    <div class="d-flex flex-column h-100">
+        <nav class="navbar navbar-light bg-white border-bottom">
+            <a class="navbar-brand" href="https://moodle-but.iutbeziers.fr/moodle" title="Moodle didex BUT">
+                Moodle didex BUT
+            </a>
+        </nav>
+        <main class="container-fluid mt-2 flex-grow-1 flex-shrink-1">
+            <div>
+                <h1><a href="./index.html">RT2 - SAé302 Développer des applications communicantes</a></h1>
+                <p>RT2 - SAé302 Développer des applications communicantes</p>
+                    <div class="alert alert-info alert-block">
+        Ce fichier fait partie du contenu téléchargé de <a href="https://moodle-but.iutbeziers.fr/moodle/course/view.php?id=545">RT2 - SAé302 Développer des applications communicantes</a>.
+    </div>
+    <div>
+        <a href="./about.html">Résumé du cours</a>
+    </div>
+
+    <div>
+        <h3></h3>
+        <div>
+            <p dir="ltr" style="text-align:left;"><strong>Descriptif générique :</strong><br />  Partant de l’analyse d’un cahier des charges fourni, le professionnel R&amp;T développe une application communicante permettant l’échange et la sauvegarde de données. La réalisation de ce projet contient les étapes suivantes :<br />  – Analyser le cahier des charges fourni et répondre à celui-ci en mentionnant les technologies à utiliser et éventuellement leur impact environnemental et économique ;<br />  – Développer une application client/serveur ;<br />  – Authentifier les utilisateurs ;<br />  – Sauvegarder les données échangées ;<br />  – Concevoir une interface graphique, une application mobile ou une interface Web.</p><p dir="ltr" style="text-align:left;"></p><p dir="ltr"><strong>Séances: </strong><span>1 CM, 10 E, 14 NE, 4 TP</span></p><p dir="ltr"><span></span></p><p dir="ltr"><strong>Séances App: </strong><span>5 E, 7 NE, 3 TP</span></p><br /><p></p><br /><p></p>
+        </div>
+        <hr>
+        <h3>Cahier des charges</h3>
+        <div>
+            <h3>Application client/serveur de gestion de certificats</h3>L'application client/serveur sera écrite en python (sans FRAMEWORK) fonctionnera en TCP sur le port 7890.<br /><br /><ol><li>    Développer des outils en ligne de commande</li><li>    Authentifier les utilisateurs</li><li>    Sauvegarder les données échangées</li></ol><br />But:<br /><ul><li>    Création/vérification/renouvellement/révocation de certficats.</li><li>    Un utilisateur peut gérer entièrement une ou plusieurs PKI (Public Key Infrastructure).</li><li>    L'administrateur possède tous les droits. Il peut créer des utilisateurs et leur affecter la gestion d'une PKI, changer les mots de passe, bloquer certains comptes, etc...</li></ul><br />Fonctionnalités obligatoires:<br /><br /><ul><li>    Application serveur "multi-clients" simultanés</li><li>    Notions de droits pour les utilisateurs (role administrateur, éditeur, vérificateur...)</li><li>    Stockage de tous les évènements (authentification, commandes, erreurs, ...) dans un fichier de traces horodaté.</li></ul><br />En option, on pourra :<br /><br /><ul><li>    Revenir en arrière pour annuler une commande passée par erreur.</li><li>    Chiffrer les échanges de données (TLS).</li><li>    Utiliser IPv6 et/ou IPv4 pour se connecter au serveur.</li><li>    Concevoir une interface graphique, une application mobile ou une interface Web.</li></ul><br />Exemples d'utilisation du client:<br /><br /><pre>pkicli -H mypki.rtbz.fr -u admin -p<br />password: ***********<br /><br />pkicli# help<br />pkicli# users list<br />pkicli# users disable alice<br />pkicli# users enable john<br />pkicli# users create bob XXXX<br />pkicli# users infos bob<br /><br />pkicli# pki list<br />pkicli# pki add ca1 /C=fr/O=SAE302/CN=CA1 RSA 4096 enc<br />pkicli# pki delete ca15<br />pkicli# pki infos ca1<br />pkicli# pki update ca1<br />pkicli[ca1]# rename ca2<br />pkicli[ca2]# list crt<br />pkicli[ca2]# revoke key18<br />pkicli[ca2]# crlgen 90<br />pkicli[ca2]# bye<br /><br />pkicli# users update bob<br />pkicli(bob)# pki list<br />pkicli(bob)# add ca2,ca3<br />pkicli(bob)# delete ca3<br />pkicli(bob)# passwd YYYY<br />pkicli(bob)# bye<br />pkicli# bye<br /><br />pkicli -H mypki.rtbz.fr -u bob -p<br />password: ******<br />pkicli&gt; pki list<br />pkicli&gt; pki dump ca2<br />pkicli&gt; pki update ca2<br />pkicli[ca2]&gt; keygen key42 RSA 2048 enc<br />pkicli[ca2]&gt; keygen key51 EC secp256k1<br />pkicli[ca2]&gt; list keys<br />pkicli[ca2]&gt; show privkey key42<br />pkicli[ca2]&gt; show pubkey key42<br />pkicli[ca2]&gt; keypem key42<br />pkicli[ca2]&gt; req csr ica2 /C=fr/O=SAE302/CN=ICA2 KU=DS,KCS,CS CA=TRUE<br />pkicli[ca2]&gt; req csr key42 /C=fr/O=SAE302/CN=WEB42 KU=DS,KE EKU=SRV SAN=DNS:<a href="http://www.key42.fr" class="_blanktarget">www.key42.fr</a><br />pkicli[ca2]&gt; req csr key51 /C=fr/O=SAE302/CN=Client51/emailAddress=jdoe@gmail.com KU=DS,KE,KA,NR,DE EKU=CLI<br />pkicli[ca2]&gt; list csr<br />pkicli[ca2]&gt; show csr key42<br />pkicli[ca2]&gt; csrpem key42<br />pkicli[ca2]&gt; sign crt ica2 ca2<br />pkicli[ca2]&gt; sign crt key51 ica2<br />pkicli[ca2]&gt; crtpem ica2<br />pkicli[ca2]&gt; show crt ica2<br />pkicli[ca2]&gt; list crt<br />pkicli[ca2]&gt; ...<br />pkicli[ca2]&gt; bye<br />pkicli&gt; bye<br /><br /></pre>
+        </div>
+        <hr>
+        <h3>Séances Encadrées / Non encadrées</h3>
+        <ul>
+            <li><a href="./URL_Dpot_git_classroom_.43541/index.html">Dépot git classroom (URL)</a></li>
+            <li><a href="./tiquette_Sance_1_1-Utiliser_l..._.41429/index.html">Séance 1 :
+1-Utiliser l'outil nc pour se connecte... (Étiquette)</a></li>
+        </ul>
+        <hr>
+        <h3>Travaux Pratiques</h3>
+        <ul>
+            <li><a href="./URL_Dpot_git_classroom_.41340/index.html">Dépot git classroom (URL)</a></li>
+            <li><a href="./tiquette_TP1_-_Chiffrement_de..._.41637/index.html">TP1 - Chiffrement des données :
+Comment chiffrer ... (Étiquette)</a></li>
+            <li><a href="./tiquette_TP2_-_Tests_unitaire..._.41900/index.html">TP2 - Tests unitaires :https://fr.wikipedia.org/wi... (Étiquette)</a></li>
+            <li><a href="./tiquette_TP3_-_Fonctionnalits..._.42116/index.html">TP3 - Fonctionnalités supplémentaires :
+
+    
+ ... (Étiquette)</a></li>
+            <li><a href="./tiquette_Dernier_TP_-_Prsenta..._.42082/index.html">Dernier TP - Présentation de la SAE302 - mercredi ... (Étiquette)</a></li>
+        </ul>
+        <hr>
+    </div>
+
+            </div>
+        </main>
+        <footer id="page-footer" class="py-3 bg-dark text-light">
+            <div class="container">
+                <div>Ce fichier fait partie du contenu téléchargé de <a href="https://moodle-but.iutbeziers.fr/moodle/course/view.php?id=545">RT2 - SAé302 Développer des applications communicantes</a> par Urtado Pierre le lundi 9 mars 2026, 18:08.</div>
+            </div>
+        </footer>
+    </div>
+</body>
+</html>

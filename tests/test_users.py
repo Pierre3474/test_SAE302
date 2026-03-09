@@ -478,5 +478,242 @@ class TestCommandesGenerales(unittest.TestCase):
         self.assertIn("ERREUR", resultat)
 
 
+class TestVerrouillageCompte(unittest.TestCase):
+    """Tests pour la protection brute-force (lockout apres N echecs)."""
+
+    def setUp(self):
+        self.bdd = MagicMock()
+        self.session = SessionFactice(authenticated=False)
+        self.bdd.get_user.return_value = {
+            "id": 1, "username": "bob", "password_hash": hash_password("secret"),
+            "password_sha256": hash_sha256("secret"),
+            "role": "viewer", "enabled": True,
+        }
+
+    def test_compte_verrouille_bloque_login(self):
+        """Un compte verrouille doit etre refuse a la connexion."""
+        self.bdd.is_account_locked.return_value = True
+        resultat = handle_command(self.session, "login bob secret", self.bdd)
+        self.assertIn("ERREUR", resultat)
+        self.assertIn("verrouille", resultat.lower())
+
+    def test_mauvais_mdp_incremente_compteur(self):
+        """Un mauvais mot de passe doit appeler record_failed_login."""
+        self.bdd.is_account_locked.return_value = False
+        self.bdd.record_failed_login.return_value = 1
+        resultat = handle_command(self.session, "login bob mauvais", self.bdd)
+        self.assertIn("ERREUR", resultat)
+        self.bdd.record_failed_login.assert_called_once_with("bob")
+
+    def test_message_tentatives_restantes(self):
+        """Le message doit indiquer le nombre de tentatives restantes."""
+        self.bdd.is_account_locked.return_value = False
+        self.bdd.record_failed_login.return_value = 2
+        self.bdd.MAX_FAILED_ATTEMPTS = 5
+        resultat = handle_command(self.session, "login bob mauvais", self.bdd)
+        self.assertIn("ERREUR", resultat)
+        self.assertIn("restante", resultat.lower())
+
+    def test_login_reussi_reset_compteur(self):
+        """Un login reussi doit appeler reset_failed_login."""
+        self.bdd.is_account_locked.return_value = False
+        resultat = handle_command(self.session, "login bob secret", self.bdd)
+        self.assertTrue(resultat.startswith("OK"))
+        self.bdd.reset_failed_login.assert_called_once_with(1)
+
+    def test_unlock_admin(self):
+        """'users unlock bob' doit deverrouiller le compte (admin)."""
+        session_admin = SessionFactice(role="admin")
+        self.bdd.get_user.return_value = {"id": 2, "username": "bob"}
+        resultat = handle_command(session_admin, "users unlock bob", self.bdd)
+        self.assertIn("deverrouille", resultat.lower())
+        self.bdd.reset_failed_login.assert_called_once_with(2)
+
+    def test_unlock_utilisateur_inexistant(self):
+        """Deverrouiller un utilisateur inexistant doit echouer."""
+        session_admin = SessionFactice(role="admin")
+        self.bdd.get_user.return_value = None
+        resultat = handle_command(session_admin, "users unlock fantome", self.bdd)
+        self.assertIn("ERREUR", resultat)
+
+    def test_unlock_sans_permission(self):
+        """Un non-admin ne peut pas deverrouiller un compte."""
+        session_viewer = SessionFactice(role="viewer")
+        resultat = handle_command(session_viewer, "users unlock bob", self.bdd)
+        self.assertIn("ERREUR", resultat)
+        self.assertIn("Permission", resultat)
+
+
+class TestTOTP(unittest.TestCase):
+    """Tests pour la gestion TOTP (2FA)."""
+
+    def setUp(self):
+        self.bdd = MagicMock()
+        self.session = SessionFactice(role="admin")
+        self.bdd.get_user.return_value = {
+            "id": 2, "username": "bob", "role": "viewer",
+            "enabled": True, "totp_secret": None, "totp_enabled": False,
+        }
+
+    def test_totp_setup_genere_secret(self):
+        """'users totp setup bob' doit generer un secret et l'URI."""
+        resultat = handle_command(self.session, "users totp setup bob", self.bdd)
+        self.assertIn("Secret", resultat)
+        self.assertIn("URI", resultat)
+        self.bdd.set_totp.assert_called_once()
+
+    def test_totp_enable(self):
+        """'users totp enable bob' doit activer le 2FA."""
+        self.bdd.get_user.return_value = {
+            "id": 2, "username": "bob", "role": "viewer",
+            "enabled": True, "totp_secret": "JBSWY3DPEHPK3PXP", "totp_enabled": False,
+        }
+        resultat = handle_command(self.session, "users totp enable bob", self.bdd)
+        self.assertIn("active", resultat.lower())
+        self.bdd.set_totp.assert_called_once()
+
+    def test_totp_enable_sans_secret(self):
+        """Activer le 2FA sans secret configure doit echouer."""
+        self.bdd.get_user.return_value = {
+            "id": 2, "username": "bob", "totp_secret": None, "totp_enabled": False,
+        }
+        resultat = handle_command(self.session, "users totp enable bob", self.bdd)
+        self.assertIn("ERREUR", resultat)
+
+    def test_totp_disable(self):
+        """'users totp disable bob' doit desactiver le 2FA."""
+        resultat = handle_command(self.session, "users totp disable bob", self.bdd)
+        self.assertIn("desactive", resultat.lower())
+        self.bdd.set_totp.assert_called_once_with(2, None, enabled=False)
+
+    def test_totp_status_non_configure(self):
+        """'users totp status bob' doit indiquer que le 2FA n'est pas configure."""
+        resultat = handle_command(self.session, "users totp status bob", self.bdd)
+        self.assertIn("bob", resultat)
+
+    def test_totp_status_actif(self):
+        """'users totp status bob' doit indiquer ACTIVE si totp_enabled=True."""
+        self.bdd.get_user.return_value = {
+            "id": 2, "username": "bob", "totp_secret": "SECRET", "totp_enabled": True,
+        }
+        resultat = handle_command(self.session, "users totp status bob", self.bdd)
+        self.assertIn("ACTIVE", resultat)
+
+    def test_totp_utilisateur_inexistant(self):
+        """TOTP sur un utilisateur inexistant doit echouer."""
+        self.bdd.get_user.return_value = None
+        resultat = handle_command(self.session, "users totp setup fantome", self.bdd)
+        self.assertIn("ERREUR", resultat)
+
+    def test_totp_sans_permission(self):
+        """Un viewer ne peut pas gerer le TOTP."""
+        session_viewer = SessionFactice(role="viewer")
+        resultat = handle_command(session_viewer, "users totp setup bob", self.bdd)
+        self.assertIn("ERREUR", resultat)
+
+    def test_otp_sans_pending(self):
+        """La commande 'otp' sans authentification en cours doit echouer."""
+        session = SessionFactice(authenticated=False)
+        resultat = handle_command(session, "otp 123456", self.bdd)
+        self.assertIn("ERREUR", resultat)
+
+
+class TestWhoami(unittest.TestCase):
+    """Tests pour la commande whoami."""
+
+    def setUp(self):
+        self.bdd = MagicMock()
+        self.session = SessionFactice(role="admin", username="admin", user_id=1)
+
+    def test_whoami_affiche_utilisateur(self):
+        """'whoami' doit afficher le nom d'utilisateur."""
+        self.bdd.get_user_pkis.return_value = []
+        self.bdd.list_pkis.return_value = []
+        self.bdd.get_user.return_value = {
+            "username": "admin", "totp_enabled": False,
+        }
+        resultat = handle_command(self.session, "whoami", self.bdd)
+        self.assertIn("admin", resultat)
+
+    def test_whoami_affiche_role(self):
+        """'whoami' doit afficher le role."""
+        self.bdd.get_user_pkis.return_value = []
+        self.bdd.list_pkis.return_value = []
+        self.bdd.get_user.return_value = {"username": "admin", "totp_enabled": False}
+        resultat = handle_command(self.session, "whoami", self.bdd)
+        self.assertIn("admin", resultat)
+
+    def test_whoami_affiche_totp_desactive(self):
+        """'whoami' doit indiquer que le 2FA est desactive."""
+        self.bdd.get_user_pkis.return_value = []
+        self.bdd.list_pkis.return_value = []
+        self.bdd.get_user.return_value = {"username": "admin", "totp_enabled": False}
+        resultat = handle_command(self.session, "whoami", self.bdd)
+        self.assertIn("desactive", resultat.lower())
+
+    def test_whoami_affiche_totp_actif(self):
+        """'whoami' doit indiquer que le 2FA est actif."""
+        self.bdd.get_user_pkis.return_value = []
+        self.bdd.list_pkis.return_value = []
+        self.bdd.get_user.return_value = {"username": "admin", "totp_enabled": True}
+        resultat = handle_command(self.session, "whoami", self.bdd)
+        self.assertIn("active", resultat.lower())
+
+    def test_whoami_non_authentifie(self):
+        """'whoami' sans etre authentifie doit echouer."""
+        session = SessionFactice(authenticated=False)
+        resultat = handle_command(session, "whoami", self.bdd)
+        self.assertIn("ERREUR", resultat)
+
+
+class TestLogs(unittest.TestCase):
+    """Tests pour la commande logs."""
+
+    def setUp(self):
+        self.bdd = MagicMock()
+        self.session = SessionFactice(role="admin")
+
+    def test_logs_admin_affiche_resultats(self):
+        """'logs' doit afficher les logs d'audit pour un admin."""
+        self.bdd.get_recent_logs.return_value = [
+            {"timestamp": "2024-01-01 12:00:00", "username": "admin",
+             "ip_address": "127.0.0.1", "action": "LOGIN", "details": "OK"},
+        ]
+        resultat = handle_command(self.session, "logs", self.bdd)
+        self.assertIn("LOGIN", resultat)
+
+    def test_logs_vides(self):
+        """'logs' sans entrees doit indiquer qu'il n'y a rien."""
+        self.bdd.get_recent_logs.return_value = []
+        resultat = handle_command(self.session, "logs", self.bdd)
+        self.assertIn("Aucun", resultat)
+
+    def test_logs_avec_limite(self):
+        """'logs 10' doit appeler get_recent_logs avec limit=10."""
+        self.bdd.get_recent_logs.return_value = []
+        handle_command(self.session, "logs 10", self.bdd)
+        self.bdd.get_recent_logs.assert_called_once_with(10)
+
+    def test_logs_limite_max(self):
+        """La limite ne doit pas depasser 500."""
+        self.bdd.get_recent_logs.return_value = []
+        handle_command(self.session, "logs 9999", self.bdd)
+        args = self.bdd.get_recent_logs.call_args[0][0]
+        self.assertLessEqual(args, 500)
+
+    def test_logs_non_admin_refuse(self):
+        """Un non-admin ne doit pas pouvoir lire les logs."""
+        session_viewer = SessionFactice(role="viewer")
+        resultat = handle_command(session_viewer, "logs", self.bdd)
+        self.assertIn("ERREUR", resultat)
+        self.assertIn("Permission", resultat)
+
+    def test_logs_editor_refuse(self):
+        """Un editor ne doit pas pouvoir lire les logs."""
+        session_editor = SessionFactice(role="editor")
+        resultat = handle_command(session_editor, "logs", self.bdd)
+        self.assertIn("ERREUR", resultat)
+
+
 if __name__ == "__main__":
     unittest.main()

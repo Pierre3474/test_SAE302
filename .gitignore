@@ -8,7 +8,10 @@
 # Cles privees et certificats
 *.pem
 *.csr
+*.key
+*.crt
 keys/
+certs/
 
 # Python
 __pycache__/
@@ -22,6 +25,12 @@ htmlcov/
 
 # Logs serveur
 logs/*.log
+
+# Rapport de couverture
+.coveragerc
+
+# macOS
+.DS_Store
 
 # Docker volumes
 postgres_data/

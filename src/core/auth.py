@@ -9,6 +9,7 @@ Roles :
 
 import hashlib
 import logging
+import pyotp
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
@@ -103,3 +104,27 @@ def check_pki_access(db, user_id: int, pki_id: int, role: str) -> bool:
         return True
     user_pkis = db.get_user_pkis(user_id)
     return pki_id in user_pkis
+
+
+# ------------------------------------------------------------------
+#  TOTP — Authentification multi-facteurs (RFC 6238)
+# ------------------------------------------------------------------
+
+def generate_totp_secret() -> str:
+    """Genere un secret TOTP aleatoire (base32, 32 caracteres)."""
+    return pyotp.random_base32()
+
+
+def verify_totp(secret: str, code: str) -> bool:
+    """Verifie un code TOTP (fenetre de 1 periode de tolerance)."""
+    try:
+        totp = pyotp.TOTP(secret)
+        return totp.verify(code, valid_window=1)
+    except Exception:
+        return False
+
+
+def get_totp_uri(secret: str, username: str, issuer: str = "SAE302-PKI") -> str:
+    """Retourne l'URI de provisioning pour FreeOTP / Google Authenticator."""
+    totp = pyotp.TOTP(secret)
+    return totp.provisioning_uri(name=username, issuer_name=issuer)

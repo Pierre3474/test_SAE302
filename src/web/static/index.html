@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAE302 PKI Manager</title>
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+        crossorigin="anonymous" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ===== LOGIN PAGE ===== -->
+<div id="page-login" class="d-flex align-items-center justify-content-center min-vh-100 bg-light">
+  <div class="card shadow-sm" style="width: 360px;">
+    <div class="card-body p-4">
+      <h4 class="card-title text-center mb-4">
+        <span class="text-primary fw-bold">SAE302</span> PKI Manager
+      </h4>
+      <form id="login-form" novalidate>
+        <div class="mb-3">
+          <label for="login-username" class="form-label">Username</label>
+          <input type="text" class="form-control" id="login-username" autocomplete="username" required />
+        </div>
+        <div class="mb-3">
+          <label for="login-password" class="form-label">Password</label>
+          <input type="password" class="form-control" id="login-password" autocomplete="current-password" required />
+        </div>
+        <div class="mb-3" id="otp-field" style="display:none;">
+          <label for="login-otp" class="form-label">OTP Code (TOTP)</label>
+          <input type="text" class="form-control" id="login-otp" autocomplete="one-time-code"
+                 inputmode="numeric" maxlength="6" placeholder="6-digit code" />
+        </div>
+        <div id="login-error" class="alert alert-danger py-2 d-none"></div>
+        <button type="submit" class="btn btn-primary w-100" id="login-btn">
+          <span id="login-spinner" class="spinner-border spinner-border-sm me-2 d-none"></span>
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MAIN APP ===== -->
+<div id="page-app" style="display:none;">
+
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
+    <div class="container-fluid">
+      <span class="navbar-brand fw-bold">SAE302 PKI</span>
+      <div class="d-flex align-items-center gap-3 ms-auto">
+        <span class="text-white small" id="nav-username"></span>
+        <span class="badge bg-light text-primary" id="nav-role"></span>
+        <button class="btn btn-outline-light btn-sm" id="logout-btn">Logout</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid">
+    <div class="row">
+
+      <!-- Sidebar -->
+      <nav class="col-md-2 sidebar pt-3 d-none d-md-block">
+        <ul class="nav flex-column">
+          <li class="nav-item">
+            <a class="nav-link" href="#dashboard" data-section="dashboard">
+              Dashboard
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#pki" data-section="pki">
+              PKI Management
+            </a>
+          </li>
+          <li class="nav-item admin-only d-none">
+            <a class="nav-link" href="#users" data-section="users">
+              Users
+            </a>
+          </li>
+          <li class="nav-item admin-only d-none">
+            <a class="nav-link" href="#logs" data-section="logs">
+              Audit Logs
+            </a>
+          </li>
+        </ul>
+      </nav>
+
+      <!-- Main content -->
+      <main class="col-md-10 ms-sm-auto pt-4 px-4">
+
+        <!-- DASHBOARD -->
+        <section id="section-dashboard" class="section">
+          <h2 class="mb-4">Dashboard</h2>
+          <div class="row g-3 mb-4">
+            <div class="col-sm-6 col-lg-3">
+              <div class="card text-white bg-primary">
+                <div class="card-body">
+                  <div class="fs-2 fw-bold" id="dash-pki-count">—</div>
+                  <div class="small">PKI Authorities</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-sm-6 col-lg-3 admin-only d-none">
+              <div class="card text-white bg-success">
+                <div class="card-body">
+                  <div class="fs-2 fw-bold" id="dash-user-count">—</div>
+                  <div class="small">Users</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <h5>Recent Activity</h5>
+          <div id="dash-recent" class="text-muted small">Loading…</div>
+        </section>
+
+        <!-- PKI MANAGEMENT -->
+        <section id="section-pki" class="section d-none">
+          <div class="d-flex align-items-center justify-content-between mb-3">
+            <h2>PKI Management</h2>
+            <button class="btn btn-primary btn-sm" id="btn-add-pki">+ Add PKI</button>
+          </div>
+          <div id="pki-list" class="row g-3">
+            <div class="text-muted">Loading…</div>
+          </div>
+        </section>
+
+        <!-- USERS -->
+        <section id="section-users" class="section d-none">
+          <div class="d-flex align-items-center justify-content-between mb-3">
+            <h2>Users</h2>
+            <button class="btn btn-primary btn-sm" id="btn-add-user">+ Add User</button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-striped table-hover align-middle">
+              <thead class="table-dark">
+                <tr>
+                  <th>Username</th><th>Role</th><th>Enabled</th><th>TOTP</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody">
+                <tr><td colspan="5" class="text-muted">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- LOGS -->
+        <section id="section-logs" class="section d-none">
+          <h2 class="mb-3">Audit Logs</h2>
+          <div class="table-responsive logs-table">
+            <table class="table table-sm table-striped">
+              <thead class="table-dark">
+                <tr>
+                  <th>Timestamp</th><th>User</th><th>Action</th><th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="logs-tbody">
+                <tr><td colspan="4" class="text-muted">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODALS ===== -->
+
+<!-- Add PKI -->
+<div class="modal fade" id="modal-add-pki" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add PKI</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">PKI Name</label>
+          <input type="text" class="form-control" id="add-pki-name" placeholder="e.g. myca" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Subject (CN=...)</label>
+          <input type="text" class="form-control" id="add-pki-subject" placeholder="e.g. CN=MyCA" />
+        </div>
+        <div id="add-pki-error" class="alert alert-danger d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="btn-add-pki-submit">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Keygen -->
+<div class="modal fade" id="modal-keygen" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Generate Key</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="keygen-pki-name" />
+        <div class="mb-3">
+          <label class="form-label">Key Name</label>
+          <input type="text" class="form-control" id="keygen-key-name" placeholder="e.g. root" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Algorithm</label>
+          <select class="form-select" id="keygen-algorithm">
+            <option value="RSA">RSA</option>
+            <option value="EC">EC</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Key Size / Curve</label>
+          <input type="text" class="form-control" id="keygen-key-size" value="2048" />
+        </div>
+        <div id="keygen-error" class="alert alert-danger d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="btn-keygen-submit">Generate</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CSR -->
+<div class="modal fade" id="modal-csr" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Generate CSR</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="csr-pki-name" />
+        <div class="mb-3">
+          <label class="form-label">Key Name</label>
+          <input type="text" class="form-control" id="csr-key-name" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Subject</label>
+          <input type="text" class="form-control" id="csr-subject" placeholder="CN=server1" />
+        </div>
+        <div id="csr-error" class="alert alert-danger d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="btn-csr-submit">Generate</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Sign -->
+<div class="modal fade" id="modal-sign" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Sign Certificate</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="sign-pki-name" />
+        <div class="mb-3">
+          <label class="form-label">Key to sign</label>
+          <input type="text" class="form-control" id="sign-key-name" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">CA Key</label>
+          <input type="text" class="form-control" id="sign-ca-key" placeholder="CA key name (leave blank for self-signed)" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Validity (days)</label>
+          <input type="number" class="form-control" id="sign-days" value="365" />
+        </div>
+        <div id="sign-error" class="alert alert-danger d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="btn-sign-submit">Sign</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PEM Export -->
+<div class="modal fade" id="modal-pem" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Certificate PEM</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <textarea class="form-control font-monospace" id="pem-content" rows="14" readonly></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button class="btn btn-primary" id="btn-pem-copy">Copy</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add User -->
+<div class="modal fade" id="modal-add-user" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add User</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Username</label>
+          <input type="text" class="form-control" id="add-user-name" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Password</label>
+          <input type="password" class="form-control" id="add-user-password" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Role</label>
+          <select class="form-select" id="add-user-role">
+            <option value="viewer">Viewer</option>
+            <option value="editor">Editor</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div id="add-user-error" class="alert alert-danger d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="btn-add-user-submit">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc4s9bIOgUxi8T/jzmLXh2FoO8oRAi3oNKmJKNPkChqX"
+        crossorigin="anonymous"></script>
+<script src="app.js"></script>
+</body>
+</html>

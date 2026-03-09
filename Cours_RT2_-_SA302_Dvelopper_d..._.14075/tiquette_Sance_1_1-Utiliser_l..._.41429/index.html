@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Moodle didex BUT - RT2 - SAé302 Développer des applications communicantes</title>
+    <link rel="stylesheet" type="text/css" href="..//shared/moodle.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+</head>
+<body>
+    <div class="d-flex flex-column h-100">
+        <nav class="navbar navbar-light bg-white border-bottom">
+            <a class="navbar-brand" href="https://moodle-but.iutbeziers.fr/moodle" title="Moodle didex BUT">
+                Moodle didex BUT
+            </a>
+        </nav>
+        <main class="container-fluid mt-2 flex-grow-1 flex-shrink-1">
+            <div>
+                <h1><a href="../index.html">RT2 - SAé302 Développer des applications communicantes</a></h1>
+                <p>RT2 - SAé302 Développer des applications communicantes</p>
+                    <h2>
+        Séance 1 :
+1-Utiliser l'outil nc pour se connecte...
+    </h2>
+
+    <div class="alert alert-info alert-block">
+        Cette page fait partie du contenu téléchargé de <a href="{$a->modulelink}">{$a->modulename}</a> le {$a->date}. Certains contenus et tous les fichiers de taille plus grande que {$a->maxfilesize} ne sont pas téléchargés.    </div>
+
+    <h3>Description</h3>
+    <div>
+        <h3 dir="ltr" style="text-align:left;">Séance 1 :</h3>
+<div>1-Utiliser l'outil <strong>nc</strong> pour se connecter au serveur 10.42.227.111 sur le port 4567.<br />2-Vérifier que le serveur suit bien le protocole ci-dessous:<br />
+    <pre>  client               serveur<br />  &lt;---- Server Hello    -----<br />  ----- Client name     ----&gt;<br />  &lt;---- Server response -----</pre>3-Ecrire ensuite un client en python.<br />4-Comment afficher les valeurs @ip+port source et destination ?<br />5-Comment indiquer le message envoyé par le client sur la ligne de commandes ?<br />6-Comment le demander au clavier s'il n'est pas fourni ?<br />7-Comment ne pas afficher les caractères dans la console quand on tape le message du client ?<br />8-Ecrire maintenant le serveur (en version multi-clients simultanés)...<br />9-Comment écrire alors un nouveau client/serveur supportant le protocole suivant <br />  avec des identifiants fixes au niveau du serveur (user=toto;pwd=titi):<br />
+    <pre>  client               serveur<br />  &lt;---- Server AUTH     -----<br />  ----- Client USER     ----&gt;<br />  ----- Client PWD      ----&gt;<br />  &lt;---- Server response -----</pre>10-Comment utiliser plutôt un fichier texte d'utilisateurs (lignes au format: user:pwd) ?<br />11-Comment utiliser un fichier texte d'utilisateurs plus sécurisé (lignes au format: user:sha1(pwd)) ?<br />12-Vérifier qu'en capturant les trames, on retrouve bien les identifiants en clair.<br />13-Pour ne pas envoyer le mot de passe sur le réseau, <br />   on change le protocole pour utiliser un challenge aléatoire (PWDHASH=SHA256(CHALL+PWD)).
+</div>
+<div>  Peut-on toujours utiliser la base d'utilisateurs avec des mots de passe hachés ?<br />
+    <pre>  client               serveur<br />  &lt;---- Server CHALL    -----<br />  ----- Client USER     ----&gt;<br />  ----- Client PWDHASH  ----&gt;<br />  &lt;---- Server response -----<br /></pre>
+    <p>14-Que faudrait-il faire pour avoir une base d'utilisateurs sécurisée dans ce cas ?<br />
+      15-Comment utiliser plutôt une base de données pour stocker les utilisateurs ?</p>
+</div>
+    </div>
+    <hr>
+
+
+            </div>
+        </main>
+        <footer id="page-footer" class="py-3 bg-dark text-light">
+            <div class="container">
+                <div>Ce fichier fait partie du contenu téléchargé de <a href="https://moodle-but.iutbeziers.fr/moodle/course/view.php?id=545">RT2 - SAé302 Développer des applications communicantes</a> par Urtado Pierre le lundi 9 mars 2026, 18:08.</div>
+            </div>
+        </footer>
+    </div>
+</body>
+</html>

@@ -29,9 +29,13 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # ---------------------------------------------------------------------------
 import hashlib      # SHA256 pour challenge-response
 import socket       # Communication TCP avec le serveur
+import ssl          # Chiffrement TLS
 import argparse     # Parsing des arguments en ligne de commande (-H, -u, -p)
 import getpass      # Saisie masquee du mot de passe
 import logging      # Journalisation structuree
+import threading    # Spinner en arriere-plan
+import itertools    # Cycle d'animation spinner
+import time         # Pause du spinner
 try:
     import readline  # Historique des commandes (fleches haut/bas)
     _HAS_READLINE = True
@@ -42,6 +46,67 @@ except ImportError:
 # 3) IMPORTS TIERS
 # ---------------------------------------------------------------------------
 from dotenv import load_dotenv  # Chargement des variables depuis .env
+
+# ---------------------------------------------------------------------------
+# COULEURS ANSI (degradation gracieuse si terminal non supporte)
+# ---------------------------------------------------------------------------
+_USE_COLOR = sys.stdout.isatty()
+
+def _c(code: str, text: str) -> str:
+    return f"\033[{code}m{text}\033[0m" if _USE_COLOR else text
+
+def _ok(t):    return _c("92", t)   # vert
+def _err(t):   return _c("91", t)   # rouge
+def _warn(t):  return _c("93", t)   # jaune
+def _info(t):  return _c("96", t)   # cyan
+def _bold(t):  return _c("1",  t)   # gras
+
+def _spinner_start(message: str):
+    """Lance un spinner anime dans un thread. Retourne (stop_event, thread)."""
+    stop = threading.Event()
+    frames = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+    def _run():
+        while not stop.is_set():
+            if _USE_COLOR:
+                print(f"\r  \033[96m{next(frames)}\033[0m {message}", end="", flush=True)
+            else:
+                print(f"\r  {next(frames)} {message}", end="", flush=True)
+            time.sleep(0.08)
+        print("\r" + " " * (len(message) + 6) + "\r", end="", flush=True)
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return stop, t
+
+def _spinner_stop(stop_event, thread):
+    """Arrete le spinner et attend la fin du thread."""
+    stop_event.set()
+    thread.join()
+
+
+# Commandes qui prennent du temps (generation crypto)
+_SLOW_COMMANDS = ("keygen", "sign crt", "crlgen", "req csr")
+
+
+def _colorize_response(response: str) -> str:
+    """Colorie la reponse du serveur selon son contenu."""
+    if not _USE_COLOR:
+        return response
+    lines = response.splitlines()
+    out = []
+    for line in lines:
+        if line.startswith("[ERREUR]") or line.startswith("ERROR"):
+            out.append(_err(line))
+        elif line.startswith("OK") or "succes" in line.lower() or "cree" in line.lower():
+            out.append(_ok(line))
+        elif line.startswith("---") or line.startswith("==="):
+            out.append(_info(line))
+        elif line.startswith("  ") and ("|" in line or ":" in line):
+            out.append(_c("37", line))   # gris clair pour les données
+        elif line.endswith(":") or (line and not line.startswith(" ")):
+            out.append(_bold(line))      # titres en gras
+        else:
+            out.append(line)
+    return "\n".join(out)
 
 # ---------------------------------------------------------------------------
 # 3b) CONFIGURATION DU LOGGING
@@ -135,6 +200,8 @@ class PKIClient:
         self.username = None
         self.role = None
         self.challenge = None   # Challenge recu du serveur pour auth
+        self.ipv6: bool = False        # Mode IPv6
+        self.tls_context = None        # ssl.SSLContext pour TLS (optionnel)
         # Contexte pour le prompt dynamique (ex: pkicli[ca1]#)
         self.context = None     # Nom du contexte actif (ex: "ca1", "bob")
         self.ctx_type = None    # Type : "pki" ou "user"
@@ -162,9 +229,16 @@ class PKIClient:
             ConnectionRefusedError : si le serveur n'ecoute pas.
             OSError                : si l'adresse est invalide.
         """
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        af = socket.AF_INET6 if getattr(self, 'ipv6', False) else socket.AF_INET
+        self.sock = socket.socket(af, socket.SOCK_STREAM)
         self.sock.settimeout(10)  # Timeout de 10 secondes
         self.sock.connect((self.host, self.port))
+
+        # Wrapping TLS si demande
+        if self.tls_context:
+            self.sock = self.tls_context.wrap_socket(
+                self.sock, server_hostname=self.host
+            )
 
         # Affichage des infos reseau pour le debug
         src_ip, src_port = self.sock.getsockname()
@@ -297,10 +371,26 @@ class PKIClient:
         # Ne pas logger la reponse complete (pourrait contenir des infos sensibles)
         logger.info("AUTH: %s", response.split()[0] if response else "pas de reponse")
 
-        # Le serveur repond "OK <role>" en cas de succes
+        # Le serveur demande un code OTP (TOTP / 2FA)
+        if response == "OTP_REQUIRED":
+            otp_code = input("Code OTP (FreeOTP/Authenticator): ").strip()
+            response = self.send_command(f"otp {otp_code}")
+            logger.info("OTP: %s", response.split()[0] if response else "pas de reponse")
+
+        # Le serveur repond "OK <role>" (+ eventuellement des warnings d'expiry)
         if response.startswith("OK"):
-            parts = response.split()
+            lines = response.split("\n")
+            parts = lines[0].split()
             self.role = parts[1] if len(parts) > 1 else "user"
+            role_color = {"admin": _err, "editor": _warn, "viewer": _ok}.get(self.role, _ok)
+            print(_bold(_ok(f"\n  Connecte en tant que ")) +
+                  _bold(self.username) + "  " +
+                  role_color(f"[{self.role}]") + "\n")
+            # Afficher les avertissements d'expiry si presents
+            if len(lines) > 1:
+                extra = "\n".join(lines[1:]).strip()
+                if extra:
+                    print(_warn(extra) + "\n")
             return True
 
         # Echec d'authentification
@@ -325,21 +415,21 @@ class PKIClient:
         Returns:
             Chaine de prompt a afficher.
         """
-        prompt = "pkicli"
+        base = _bold(_info("pkicli"))
 
         # Ajout du contexte si actif
         if self.context and self.ctx_type == "pki":
-            prompt += f"[{self.context}]"
+            base += _bold("[") + _warn(self.context) + _bold("]")
         elif self.context and self.ctx_type == "user":
-            prompt += f"({self.context})"
+            base += _bold("(") + _warn(self.context) + _bold(")")
 
         # Suffixe selon le role
         if self.role == "admin":
-            prompt += "# "
+            base += _err("# ")
         else:
-            prompt += "> "
+            base += _ok("> ")
 
-        return prompt
+        return base
 
     # ===================================================================
     #  COMMANDES LOCALES (executees cote client, sans le serveur)
@@ -527,8 +617,23 @@ class PKIClient:
         elif self.context and self.ctx_type == "user":
             full_cmd = f"users ctx {self.context} {line}"
 
+        # Spinner sur les commandes lentes (generation crypto)
+        is_slow = any(line.startswith(s) for s in _SLOW_COMMANDS)
+        spinner_msg = {
+            "keygen":   "Generation de la cle en cours...",
+            "sign crt": "Signature du certificat...",
+            "crlgen":   "Generation de la CRL...",
+            "req csr":  "Generation de la CSR...",
+        }.get(next((s for s in _SLOW_COMMANDS if line.startswith(s)), ""), "Traitement...")
+
+        if is_slow and _USE_COLOR:
+            stop_ev, spin_t = _spinner_start(spinner_msg)
+
         # Envoi au serveur et affichage de la reponse
         response = self.send_command(full_cmd)
+
+        if is_slow and _USE_COLOR:
+            _spinner_stop(stop_ev, spin_t)
 
         # Detection d'un changement de contexte dans la reponse
         if line.startswith("pki update ") and not response.startswith("[ERREUR"):
@@ -538,7 +643,7 @@ class PKIClient:
             self.context = parts[2] if len(parts) > 2 else None
             self.ctx_type = "user"
 
-        print(response)
+        print(_colorize_response(response))
         return True
 
     # ===================================================================
@@ -564,6 +669,7 @@ class PKIClient:
         print("""
 Commandes disponibles :
   help                            — Afficher cette aide
+  whoami                          — Afficher votre profil (role, PKI, 2FA)
   status                          — Afficher l'etat de la connexion
 
   --- Gestion des utilisateurs (admin) ---
@@ -577,6 +683,7 @@ Commandes disponibles :
 
   --- Gestion des PKI ---
   pki list                        — Lister les PKI
+  pki tree <nom>                  — Arbre de certification ASCII
   pki add <nom> <sujet> <algo> <taille> [enc]
                                   — Creer une PKI
   pki delete <nom>                — Supprimer une PKI
@@ -650,7 +757,7 @@ Commandes disponibles :
 
         logger.info("Serveur : %s:%s", self.host, self.port)
         logger.info("Chiffrement : XOR (cle=%s)", self.cipher.key)
-        print("Tapez 'help' pour la liste des commandes.\n")
+        print(_info("Tapez 'help' pour la liste des commandes, 'whoami' pour votre profil.\n"))
 
         while True:
             try:
@@ -714,6 +821,32 @@ def parse_args() -> argparse.Namespace:
         help="Activer les logs de debug",
     )
 
+    parser.add_argument(
+        "--tls",
+        action="store_true",
+        help="Connexion chiffree TLS",
+    )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Accepter les certificats TLS auto-signes",
+    )
+
+    # IPv4 / IPv6 (mutuellement exclusifs)
+    ip_group = parser.add_mutually_exclusive_group()
+    ip_group.add_argument(
+        "-4", "--ipv4",
+        action="store_true",
+        default=True,
+        help="Forcer IPv4 (defaut)",
+    )
+    ip_group.add_argument(
+        "-6", "--ipv6",
+        action="store_true",
+        default=False,
+        help="Forcer IPv6",
+    )
+
     return parser.parse_args()
 
 
@@ -734,6 +867,15 @@ if __name__ == "__main__":
         port=args.port,
         xor_key=XOR_KEY,
     )
+    client.ipv6 = args.ipv6
+
+    # Configuration TLS si --tls
+    if args.tls:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        if args.no_verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        client.tls_context = ctx
 
     # --- Connexion au serveur ---
     try:

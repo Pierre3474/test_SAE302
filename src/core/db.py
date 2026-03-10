@@ -42,6 +42,15 @@ class Database:
             self.minconn, self.maxconn, **dsn
         )
         log.info("Pool PostgreSQL ouvert (%d–%d connexions)", self.minconn, self.maxconn)
+        self._run_migrations()
+
+    def _run_migrations(self) -> None:
+        """Applique les migrations de schema manquantes (idempotent)."""
+        with self.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "recovery_codes TEXT DEFAULT NULL"
+            )
 
     def close(self) -> None:
         """Ferme le pool de connexions."""
@@ -72,11 +81,11 @@ class Database:
     # ------------------------------------------------------------------
 
     def get_user(self, username: str) -> dict | None:
-        """Recupere un utilisateur par son nom (inclut les colonnes TOTP)."""
+        """Recupere un utilisateur par son nom (inclut les colonnes TOTP et recovery)."""
         with self.cursor(commit=False) as cur:
             cur.execute(
                 "SELECT id, username, password_hash, password_sha256, role, enabled, "
-                "totp_secret, totp_enabled, failed_attempts, locked_until "
+                "totp_secret, totp_enabled, failed_attempts, locked_until, recovery_codes "
                 "FROM users WHERE username = %s",
                 (username,),
             )
@@ -395,11 +404,42 @@ class Database:
                 (secret, enabled, user_id),
             )
 
+    def store_recovery_codes(self, user_id: int, codes: list) -> None:
+        """Stocke les codes de recuperation TOTP sous forme JSON."""
+        import json
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET recovery_codes = %s WHERE id = %s",
+                (json.dumps(codes), user_id),
+            )
+
+    def use_recovery_code(self, user_id: int, code: str) -> bool:
+        """Verifie et consomme un code de recuperation (usage unique)."""
+        import json
+        user = self.get_user_by_id(user_id)
+        if not user or not user.get("recovery_codes"):
+            return False
+        try:
+            codes = json.loads(user["recovery_codes"])
+        except (ValueError, TypeError):
+            return False
+        code_upper = code.upper()
+        if code_upper not in codes:
+            return False
+        codes.remove(code_upper)
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET recovery_codes = %s WHERE id = %s",
+                (json.dumps(codes) if codes else None, user_id),
+            )
+        return True
+
     def get_user_by_id(self, user_id: int) -> dict | None:
         """Recupere un utilisateur par son id."""
         with self.cursor(commit=False) as cur:
             cur.execute(
-                "SELECT id, username, totp_secret, totp_enabled FROM users WHERE id = %s",
+                "SELECT id, username, totp_secret, totp_enabled, recovery_codes "
+                "FROM users WHERE id = %s",
                 (user_id,),
             )
             row = cur.fetchone()

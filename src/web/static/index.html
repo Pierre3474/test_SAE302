@@ -30,9 +30,10 @@
           <input type="password" class="form-control" id="login-password" autocomplete="current-password" required />
         </div>
         <div class="mb-3" id="otp-field" style="display:none;">
-          <label for="login-otp" class="form-label">Code OTP (TOTP)</label>
+          <label for="login-otp" class="form-label">Code OTP ou code de récupération</label>
           <input type="text" class="form-control" id="login-otp" autocomplete="one-time-code"
-                 inputmode="numeric" maxlength="6" placeholder="6 chiffres" />
+                 maxlength="13" placeholder="123456  ou  AABBCC-DDEEFF" />
+          <div class="form-text">Code TOTP à 6 chiffres ou code de récupération (XXXXXX-XXXXXX)</div>
         </div>
         <div id="login-error" class="alert alert-danger py-2 d-none"></div>
         <button type="submit" class="btn btn-primary w-100" id="login-btn">
@@ -59,6 +60,7 @@
         <span class="text-white small" id="nav-username"></span>
         <span class="badge bg-light text-primary" id="nav-role"></span>
         <span class="badge bg-warning text-dark" id="nav-session-timer" title="Temps restant"></span>
+        <button class="btn btn-outline-light btn-sm" id="btn-dark-mode" title="Mode sombre" onclick="toggleDarkMode()">🌙</button>
         <button class="btn btn-outline-light btn-sm" id="logout-btn">Déconnexion</button>
       </div>
     </div>
@@ -188,8 +190,13 @@
         <section id="section-logs" class="section d-none">
           <div class="d-flex align-items-center justify-content-between mb-3">
             <h2>Journaux d'audit</h2>
-            <input type="text" class="form-control form-control-sm" id="logs-search"
-                   placeholder="Filtrer…" style="width:220px;" />
+            <div class="d-flex gap-2">
+              <input type="text" class="form-control form-control-sm" id="logs-search"
+                     placeholder="Filtrer…" style="width:220px;" />
+              <button class="btn btn-outline-success btn-sm" onclick="downloadLogsCSV()" title="Exporter CSV">
+                ↓ CSV
+              </button>
+            </div>
           </div>
           <div class="table-responsive logs-table">
             <table class="table table-sm table-striped">
@@ -469,22 +476,65 @@
 
 <!-- Modal TOTP -->
 <div class="modal fade" id="modal-totp" tabindex="-1">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">Configuration TOTP (2FA)</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body text-center">
-        <p class="mb-1">Scannez ce QR code avec <strong>Google Authenticator</strong> ou <strong>FreeOTP</strong> :</p>
-        <div id="totp-qr" class="my-3 d-flex justify-content-center"></div>
-        <hr />
-        <p class="small text-muted mb-2">Entrez le code affiché dans votre application pour confirmer :</p>
-        <input type="text" class="form-control text-center font-monospace mb-3"
-               id="totp-verify-code" inputmode="numeric" maxlength="6"
-               placeholder="123456" style="max-width:160px; margin:0 auto;" />
-        <div id="totp-verify-error" class="alert alert-danger d-none py-2 mb-2"></div>
-        <button class="btn btn-success" id="btn-totp-enable">Activer le 2FA</button>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-6 text-center">
+            <p class="mb-1">Scannez ce QR code avec <strong>Google Authenticator</strong> ou <strong>FreeOTP</strong> :</p>
+            <div id="totp-qr" class="my-3 d-flex justify-content-center"></div>
+            <hr />
+            <p class="small text-muted mb-2">Entrez le code affiché dans votre application pour confirmer :</p>
+            <input type="text" class="form-control text-center font-monospace mb-3"
+                   id="totp-verify-code" inputmode="numeric" maxlength="6"
+                   placeholder="123456" style="max-width:160px; margin:0 auto;" />
+            <div id="totp-verify-error" class="alert alert-danger d-none py-2 mb-2"></div>
+            <button class="btn btn-success" id="btn-totp-enable">Activer le 2FA</button>
+          </div>
+          <div class="col-md-6" id="totp-recovery-section" style="display:none;">
+            <div class="alert alert-warning py-2 mb-2">
+              <strong>⚠ Codes de récupération</strong><br/>
+              <small>Conservez ces codes en lieu sûr. Chacun n'est utilisable qu'une seule fois.</small>
+            </div>
+            <div id="totp-recovery-codes" class="font-monospace bg-light p-2 rounded"
+                 style="font-size:0.82rem; line-height:2;"></div>
+            <button class="btn btn-sm btn-outline-secondary mt-2 w-100"
+                    onclick="copyRecoveryCodes()">Copier les codes</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Renouveler un certificat -->
+<div class="modal fade" id="modal-renew" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Renouveler le certificat</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="renew-pki-name" />
+        <input type="hidden" id="renew-key-name" />
+        <div class="mb-3">
+          <label class="form-label">Clé CA (laisser vide pour auto-signé)</label>
+          <input type="text" class="form-control" id="renew-ca-key" placeholder="Laisser vide = auto-signé" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Nouvelle validité (jours)</label>
+          <input type="number" class="form-control" id="renew-days" value="365" />
+        </div>
+        <div id="renew-error" class="alert alert-danger d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+        <button class="btn btn-primary" id="btn-renew-submit">Renouveler</button>
       </div>
     </div>
   </div>
@@ -498,6 +548,6 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

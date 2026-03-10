@@ -159,6 +159,15 @@ def generate_totp_secret() -> str:
     return pyotp.random_base32()
 
 
+def generate_recovery_codes(count: int = 8) -> list:
+    """Genere des codes de recuperation TOTP a usage unique (format XXXXXX-XXXXXX)."""
+    import secrets
+    return [
+        f"{secrets.token_hex(3).upper()}-{secrets.token_hex(3).upper()}"
+        for _ in range(count)
+    ]
+
+
 def verify_totp(secret: str, code: str) -> bool:
     """Verifie un code TOTP (fenetre de 1 periode de tolerance)."""
     try:

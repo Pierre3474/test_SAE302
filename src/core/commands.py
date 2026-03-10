@@ -12,7 +12,7 @@ import logging
 from core.auth import (hash_password, verify_password, check_permission,
                        check_pki_access, hash_sha256, verify_challenge,
                        generate_totp_secret, verify_totp, get_totp_uri,
-                       validate_password_strength)
+                       validate_password_strength, generate_recovery_codes)
 from core.logger import audit
 from core import pki_manager
 
@@ -222,6 +222,14 @@ def _handle_otp(session, parts: list, db) -> str:
     user = session._pending_user
 
     if not verify_totp(user["totp_secret"], code):
+        # Essai avec un code de recuperation (format XXXXXX-XXXXXX)
+        if db.use_recovery_code(user["id"], code):
+            session.totp_pending = False
+            session._pending_user = None
+            audit("LOGIN_RECOVERY", f"Code de recuperation utilise : {user['username']}",
+                  ip=session.ip, db=db)
+            _finalize_login(session, user, db)
+            return f"OK {user['role']} [code de recuperation utilise]"
         session.totp_pending = False
         session._pending_user = None
         audit("LOGIN_FAIL_OTP", f"Code OTP invalide : {user['username']}", ip=session.ip, db=db)
@@ -537,6 +545,9 @@ def _handle_users_totp(session, args: list, db) -> str:
         secret = generate_totp_secret()
         uri = get_totp_uri(secret, username)
         db.set_totp(user["id"], secret, enabled=False)
+        # Genere les codes de recuperation et les stocke
+        codes = generate_recovery_codes(8)
+        db.store_recovery_codes(user["id"], codes)
         audit("TOTP_SETUP", f"Secret TOTP genere pour {username}",
               user_id=session.user_id, ip=session.ip, db=db)
         qr_str = ""
@@ -551,13 +562,15 @@ def _handle_users_totp(session, args: list, db) -> str:
             qr_str = "\n" + buf.getvalue()
         except Exception:
             pass
+        codes_str = "  ".join(codes)
         return (
             f"Secret TOTP genere pour '{username}'.\n"
             f"  Secret (base32) : {secret}\n"
             f"  URI FreeOTP     : {uri}\n"
             f"{qr_str}"
             f"  → Scannez le QR code avec FreeOTP ou Google Authenticator.\n"
-            f"  → Activez ensuite avec : users totp enable {username}"
+            f"  → Activez ensuite avec : users totp enable {username}\n"
+            f"RECOVERY_CODES: {codes_str}"
         )
 
     elif sub == "enable":

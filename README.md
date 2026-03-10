@@ -128,9 +128,35 @@ local list [repertoire]             # Lister fichiers PEM/CSR/CRT
 
 ## Tests
 
+### Tests unitaires (utils/crypto)
+
 ```bash
 python -m pytest tests/ -v
 ```
+
+### TP2 — Tests unitaires avances
+
+Tests unitaires complets du serveur PKI avec `unittest` et `unittest.mock`.
+
+```bash
+# Lancer tous les tests TP2
+python -m unittest discover -s TP2 -v
+
+# Lancer un fichier specifique
+python -m unittest TP2.test_auth -v
+python -m unittest TP2.test_users -v
+python -m unittest TP2.test_pki -v
+python -m unittest TP2.test_droits -v
+```
+
+| Fichier | Module teste | Nb tests | Description |
+|---------|-------------|----------|-------------|
+| `test_auth.py` | `core/auth.py` | 35 | Hachage Argon2id, verification, RBAC, acces PKI |
+| `test_users.py` | `core/commands.py` | 56 | Login, CRUD utilisateurs, activation, mise a jour |
+| `test_pki.py` | `core/commands.py` + `pki_manager.py` | 44 | CRUD PKI, keygen, CSR, signature, revocation |
+| `test_droits.py` | `core/auth.py` + `core/commands.py` | 32 | Matrice RBAC, isolation, assignation PKI |
+
+**Total : 167 tests** couvrant fonctionnement normal et gestion des erreurs.
 
 ## Docker
 

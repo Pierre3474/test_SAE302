@@ -13,7 +13,13 @@ import sys
 # Allow imports from src/ when running standalone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+
 from utils.crypto import XorCipher
+
+# Load .env from project root (two levels up from src/web/)
+_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env")
+load_dotenv(_ENV_PATH, override=False)
 
 
 class PKIProxy:

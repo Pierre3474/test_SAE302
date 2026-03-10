@@ -8,7 +8,6 @@ Lancement :
 
 import os
 import sys
-import tempfile
 import pytest
 
 # Ajout du dossier src/ au path

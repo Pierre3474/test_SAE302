@@ -12,7 +12,7 @@ USER     := admin
 
 .PHONY: help install db db-stop db-reset server server-tls server-web \
         client client-tls client-ipv6 web tls-cert test test-v \
-        logs clean fclean
+        coverage lint lint-fix logs clean fclean
 
 # ── Aide ─────────────────────────────────────────────────────
 help:
@@ -110,6 +110,12 @@ coverage:
 	$(PYTHON) -m pytest $(TESTS)/ --cov=$(SRC) --cov-report=term-missing --cov-report=html:htmlcov -q
 	@echo ""
 	@echo "  Rapport HTML genere : open htmlcov/index.html"
+
+lint:
+	ruff check src/ tests/
+
+lint-fix:
+	ruff check --fix src/ tests/
 
 # ── Logs ─────────────────────────────────────────────────────
 logs:

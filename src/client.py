@@ -383,7 +383,7 @@ class PKIClient:
             parts = lines[0].split()
             self.role = parts[1] if len(parts) > 1 else "user"
             role_color = {"admin": _err, "editor": _warn, "viewer": _ok}.get(self.role, _ok)
-            print(_bold(_ok(f"\n  Connecte en tant que ")) +
+            print(_bold(_ok("\n  Connecte en tant que ")) +
                   _bold(self.username) + "  " +
                   role_color(f"[{self.role}]") + "\n")
             # Afficher les avertissements d'expiry si presents
@@ -670,6 +670,7 @@ class PKIClient:
 Commandes disponibles :
   help                            — Afficher cette aide
   whoami                          — Afficher votre profil (role, PKI, 2FA)
+  passwd <ancien> <nouveau>       — Changer son propre mot de passe
   status                          — Afficher l'etat de la connexion
 
   --- Gestion des utilisateurs (admin) ---

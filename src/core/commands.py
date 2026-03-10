@@ -11,7 +11,8 @@ import logging
 
 from core.auth import (hash_password, verify_password, check_permission,
                        check_pki_access, hash_sha256, verify_challenge,
-                       generate_totp_secret, verify_totp, get_totp_uri)
+                       generate_totp_secret, verify_totp, get_totp_uri,
+                       validate_password_strength)
 from core.logger import audit
 from core import pki_manager
 
@@ -57,7 +58,9 @@ def handle_command(session, command: str, db) -> str:
     if not session.authenticated:
         return "[ERREUR] Non authentifie. Utilisez : login <username> <password>"
 
-    if cmd == "users":
+    if cmd == "passwd":
+        return _handle_passwd(session, parts[1:], db)
+    elif cmd == "users":
         return _handle_users(session, parts[1:], db)
     elif cmd == "pki":
         return _handle_pki(session, parts[1:], db)
@@ -67,6 +70,19 @@ def handle_command(session, command: str, db) -> str:
         return _handle_whoami(session, db)
     elif cmd == "help":
         return _help_text()
+    elif cmd == "verify":
+        pki_id = getattr(session, "pki_id", None)
+        if pki_id is None:
+            return "[ERREUR] Pas de contexte PKI. Utilisez : pki ctx <nom> verify ..."
+        if len(parts) < 2 or parts[1].lower() != "crt":
+            return "[ERREUR] Usage : verify crt <key> <ca_key>"
+        if not check_permission(session.role, "verify_chain"):
+            return "[ERREUR] Permission refusee."
+        if len(parts) < 4:
+            return "[ERREUR] Usage : verify crt <key> <ca_key>"
+        key_name = parts[2]
+        ca_key_name = parts[3]
+        return pki_manager.verify_cert_against_ca(db, pki_id, key_name, ca_key_name)
     else:
         return f"[ERREUR] Commande inconnue : '{cmd}'. Tapez 'help' pour l'aide."
 
@@ -271,6 +287,42 @@ def _finalize_login(session, user: dict, db) -> None:
 #  USERS
 # ------------------------------------------------------------------
 
+def _handle_passwd(session, args: list, db) -> str:
+    """Permet a tout utilisateur authentifie de changer son propre mot de passe."""
+    if len(args) < 2:
+        return "[ERREUR] Usage : passwd <ancien_mdp> <nouveau_mdp>"
+
+    old_password = args[0]
+    new_password = args[1]
+
+    # Verifier l'ancien mot de passe
+    user = db.get_user(session.username)
+    if not user:
+        return "[ERREUR] Utilisateur introuvable."
+    if not verify_password(user["password_hash"], old_password):
+        try:
+            db.record_failed_login(session.username)
+        except Exception:
+            pass
+        audit("PASSWD_FAIL", f"Ancien mot de passe incorrect : {session.username}",
+              user_id=session.user_id, ip=session.ip, db=db)
+        return "[ERREUR] Ancien mot de passe incorrect."
+
+    # Valider la complexite du nouveau mot de passe
+    errors = validate_password_strength(new_password, username=session.username,
+                                        old_hash=user["password_hash"])
+    if errors:
+        return "[ERREUR] Mot de passe trop faible :\n" + "\n".join(f"  - {e}" for e in errors)
+
+    # Mettre a jour
+    new_hash = hash_password(new_password)
+    new_sha256 = hash_sha256(new_password)
+    db.update_user(session.user_id, password_hash=new_hash, password_sha256=new_sha256)
+    audit("PASSWD_CHANGE", f"Mot de passe change : {session.username}",
+          user_id=session.user_id, ip=session.ip, db=db)
+    return "Mot de passe mis a jour avec succes."
+
+
 def _handle_users(session, args: list, db) -> str:
     if not args:
         return "[ERREUR] Usage : users <list|create|delete|enable|disable|infos|update|totp|unlock>"
@@ -329,6 +381,9 @@ def _handle_users(session, args: list, db) -> str:
             return f"[ERREUR] Role invalide : {role}. Choix : admin, editor, viewer."
         if db.get_user(username):
             return f"[ERREUR] L'utilisateur '{username}' existe deja."
+        errors = validate_password_strength(password, username=username)
+        if errors:
+            return "[ERREUR] Mot de passe trop faible :\n" + "\n".join(f"  - {e}" for e in errors)
         pw_hash = hash_password(password)
         pw_sha256 = hash_sha256(password)
         uid = db.create_user(username, pw_hash, role, password_sha256=pw_sha256)
@@ -420,6 +475,10 @@ def _handle_users(session, args: list, db) -> str:
                   user_id=session.user_id, ip=session.ip, db=db)
             return f"Role de '{username}' mis a jour : {value}."
         elif field == "password":
+            errors = validate_password_strength(value, username=username,
+                                                old_hash=user.get("password_hash"))
+            if errors:
+                return "[ERREUR] Mot de passe trop faible :\n" + "\n".join(f"  - {e}" for e in errors)
             pw_hash = hash_password(value)
             pw_sha256 = hash_sha256(value)
             db.update_user(user["id"], password_hash=pw_hash, password_sha256=pw_sha256)
@@ -925,6 +984,17 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
                   user_id=session.user_id, ip=session.ip, db=db)
         return result
 
+    elif cmd == "verify":
+        if len(args) < 2 or args[1].lower() != "crt":
+            return "[ERREUR] Usage : verify crt <key> <ca_key>"
+        if not check_permission(session.role, "verify_chain"):
+            return "[ERREUR] Permission refusee."
+        if len(args) < 4:
+            return "[ERREUR] Usage : verify crt <key> <ca_key>"
+        key_name = args[2]
+        ca_key_name = args[3]
+        return pki_manager.verify_cert_against_ca(db, pki_id, key_name, ca_key_name)
+
     elif cmd == "rename":
         if not check_permission(session.role, "pki_rename"):
             return "[ERREUR] Permission refusee."
@@ -951,9 +1021,6 @@ def _pki_tree(db, pki: dict) -> str:
 
     # Index des cles par nom
     key_info = {k["key_name"]: k for k in keys}
-
-    # Index des certs par id
-    cert_by_id = {c["id"]: c for c in certs}
 
     # Trouver les racines (issuer_cert_id == NULL ou pointe sur lui-meme)
     roots = [c for c in certs if not c.get("issuer_cert_id") or
@@ -1060,6 +1127,7 @@ def _help_text() -> str:
   sign crt <id> <ca> [jours]
   revoke <id>
   crlgen <ca> [jours]
+  verify crt <key> <ca_key>
   rename <nouveau_nom>
 
   bye — Quitter"""

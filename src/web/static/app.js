@@ -259,6 +259,7 @@ async function togglePKIDetails(name) {
                 ${c.revoked ? '<span class="badge bg-danger">Revoked</span>' : ''}
                 <button class="btn btn-xs btn-outline-secondary" onclick="exportPEM('${escHtml(name)}','${escHtml(c.key_name)}')">PEM</button>
                 <button class="btn btn-xs btn-outline-warning" onclick="openRevoke('${escHtml(name)}','${escHtml(c.key_name)}')">Revoke</button>
+                <button class="btn btn-xs btn-outline-info" onclick="verifyCert('${escHtml(name)}','${escHtml(c.key_name)}')">Verify Chain</button>
               </div>
             </div>
             <div class="text-muted small">${escHtml(c.subject)} — ${escHtml(c.not_before)} to ${escHtml(c.not_after)}</div>
@@ -318,6 +319,18 @@ async function revokeKey(pkiName, keyName) {
     togglePKIDetails(pkiName);
   } else {
     showToast(res.data.error || 'Revoke failed.', 'error');
+  }
+}
+
+async function verifyCert(pki, keyName) {
+  const caKey = prompt(`CA key name to verify "${keyName}" against:`);
+  if (!caKey) return;
+  const res = await api('GET', `/pki/${encodeURIComponent(pki)}/verify/${encodeURIComponent(keyName)}/${encodeURIComponent(caKey)}`);
+  if (res.ok) {
+    const msg = res.data.message || '';
+    showToast(msg, res.data.valid ? 'success' : 'error');
+  } else {
+    showToast(res.data.error || 'Verify failed', 'error');
   }
 }
 

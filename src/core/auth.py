@@ -9,6 +9,7 @@ Roles :
 
 import hashlib
 import logging
+import re
 import pyotp
 
 from argon2 import PasswordHasher
@@ -21,6 +22,48 @@ _ph = PasswordHasher()
 # ------------------------------------------------------------------
 #  Hachage / verification de mots de passe
 # ------------------------------------------------------------------
+
+def validate_password_strength(password: str, username: str = "",
+                               old_hash: str | None = None) -> list[str]:
+    """
+    Verifie la complexite d'un mot de passe.
+
+    Regles appliquees (ANSSI / NIST) :
+      - Longueur minimale de 12 caracteres
+      - Au moins 1 majuscule
+      - Au moins 1 minuscule
+      - Au moins 1 chiffre
+      - Au moins 1 caractere special
+      - Ne doit pas contenir le nom d'utilisateur
+      - Ne doit pas etre identique a l'ancien mot de passe
+
+    Args:
+        password : nouveau mot de passe en clair.
+        username : nom d'utilisateur (pour interdire sa presence).
+        old_hash : hash Argon2id de l'ancien mot de passe (None si creation).
+
+    Returns:
+        Liste des erreurs. Vide si le mot de passe est valide.
+    """
+    errors = []
+
+    if len(password) < 12:
+        errors.append(f"Longueur minimale : 12 caracteres (actuel : {len(password)})")
+    if not re.search(r"[A-Z]", password):
+        errors.append("Doit contenir au moins 1 majuscule")
+    if not re.search(r"[a-z]", password):
+        errors.append("Doit contenir au moins 1 minuscule")
+    if not re.search(r"\d", password):
+        errors.append("Doit contenir au moins 1 chiffre")
+    if not re.search(r"[!@#$%^&*\-_=+<>?/\\|~`.,;:'\"\[\]{}()]", password):
+        errors.append("Doit contenir au moins 1 caractere special (!@#$%...)")
+    if username and username.lower() in password.lower():
+        errors.append("Ne doit pas contenir le nom d'utilisateur")
+    if old_hash and verify_password(old_hash, password):
+        errors.append("Ne doit pas etre identique a l'ancien mot de passe")
+
+    return errors
+
 
 def hash_password(password: str) -> str:
     """Hache un mot de passe avec Argon2id."""
@@ -69,20 +112,21 @@ _PERMISSIONS: dict[str, set[str]] = {
         "keygen", "list_keys", "show_privkey", "show_pubkey", "keypem",
         "req_csr", "list_csr", "show_csr", "csrpem",
         "sign_crt", "list_crt", "show_crt", "crtpem",
-        "revoke", "crlgen",
+        "revoke", "crlgen", "verify_chain",
     },
     "editor": {
         "pki_list", "pki_infos", "pki_dump", "pki_update",
         "keygen", "list_keys", "show_privkey", "show_pubkey", "keypem",
         "req_csr", "list_csr", "show_csr", "csrpem",
         "sign_crt", "list_crt", "show_crt", "crtpem",
-        "revoke", "crlgen",
+        "revoke", "crlgen", "verify_chain",
     },
     "viewer": {
         "pki_list", "pki_infos", "pki_dump",
         "list_keys", "show_pubkey", "keypem",
         "list_csr", "show_csr", "csrpem",
         "list_crt", "show_crt", "crtpem",
+        "verify_chain",
     },
 }
 

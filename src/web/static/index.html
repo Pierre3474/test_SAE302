@@ -189,7 +189,9 @@
         <!-- JOURNAUX D'AUDIT -->
         <section id="section-logs" class="section d-none">
           <div class="d-flex align-items-center justify-content-between mb-3">
-            <h2>Journaux d'audit</h2>
+            <h2>Journaux d'audit
+              <span id="logs-live-badge" class="badge bg-success ms-2" style="font-size:0.65rem;display:none;">● LIVE</span>
+            </h2>
             <div class="d-flex gap-2">
               <input type="text" class="form-control form-control-sm" id="logs-search"
                      placeholder="Filtrer…" style="width:220px;" />
@@ -540,14 +542,35 @@
   </div>
 </div>
 
+<!-- Modal Commandes CLI -->
+<div class="modal fade" id="modal-cli" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Commandes CLI — <span id="cli-pki-name-label" class="text-primary"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <pre id="cli-content" class="m-0 p-3 bg-dark text-light rounded-bottom font-monospace"
+             style="font-size:0.82rem; white-space:pre-wrap; min-height:200px;"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-outline-secondary" onclick="copyCliCommands()">Copier</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Conteneur de toasts -->
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

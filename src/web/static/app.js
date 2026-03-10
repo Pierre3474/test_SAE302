@@ -25,6 +25,10 @@ let _totpSelf          = false;
 let _recoveryCodes     = [];
 let _renewPkiName      = null;
 let _renewKeyName      = null;
+let _logsRefreshTimer  = null;   // auto-refresh logs
+let _lastLogsCount     = 0;      // pour détecter les nouvelles entrées
+let _pendingLogsCount  = 0;      // badge sidebar non-lu
+let _cliPkiName        = null;   // PKI courante pour le modal CLI
 let _sessionTimer = null;
 let _navigating   = false;
 let _chartCerts   = null;  // instance Chart.js
@@ -92,6 +96,148 @@ function applyDarkModePreference() {
     const btn = document.getElementById('btn-dark-mode');
     if (btn) btn.textContent = '☀️';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-refresh journaux
+// ---------------------------------------------------------------------------
+function startLogsAutoRefresh() {
+  stopLogsAutoRefresh();
+  const liveBadge = document.getElementById('logs-live-badge');
+  if (liveBadge) liveBadge.style.display = '';
+  _logsRefreshTimer = setInterval(async () => {
+    const res = await api('GET', '/logs');
+    if (!res.ok) return;
+    const fresh = [...(res.data || [])].reverse();
+    const diff = fresh.length - _lastLogsCount;
+    if (diff > 0) {
+      _lastLogsCount = fresh.length;
+      _allLogs = fresh;
+      // Rafraîchir la vue si pas de filtre actif
+      const q = (document.getElementById('logs-search')?.value || '').toLowerCase();
+      renderLogs(q ? _allLogs.filter(l =>
+        Object.values(l).some(v => String(v).toLowerCase().includes(q))) : _allLogs);
+      // Badge sidebar si l'utilisateur n'est pas sur la section logs
+      const logsSection = document.getElementById('section-logs');
+      if (logsSection && logsSection.classList.contains('d-none')) {
+        _pendingLogsCount += diff;
+        updateSidebarLogsBadge(_pendingLogsCount);
+        showToast(`${diff} nouveau${diff > 1 ? 'x' : ''} journal${diff > 1 ? 'x' : ''}.`, 'warning');
+      }
+    }
+  }, 30000);
+}
+
+function stopLogsAutoRefresh() {
+  if (_logsRefreshTimer) { clearInterval(_logsRefreshTimer); _logsRefreshTimer = null; }
+  const liveBadge = document.getElementById('logs-live-badge');
+  if (liveBadge) liveBadge.style.display = 'none';
+}
+
+function updateSidebarLogsBadge(count) {
+  const navLink = document.querySelector('.nav-link[data-section="logs"]');
+  if (!navLink) return;
+  let badge = navLink.querySelector('.logs-nav-badge');
+  if (count > 0) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'logs-nav-badge badge bg-danger ms-1';
+      navLink.appendChild(badge);
+    }
+    badge.textContent = count > 99 ? '99+' : count;
+  } else {
+    badge?.remove();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Export bundle ZIP (cert + clé privée)
+// ---------------------------------------------------------------------------
+async function downloadBundle(pkiName, keyName) {
+  showToast('Génération du bundle…', 'warning');
+  const res = await api('GET', `/pki/${encodeURIComponent(pkiName)}/bundle/${encodeURIComponent(keyName)}`);
+  if (!res.ok) { showToast(res.data.error || 'Impossible de générer le bundle.', 'error'); return; }
+
+  const { cert_pem, key_pem } = res.data;
+  if (typeof JSZip === 'undefined') {
+    // Fallback : bundle PEM concaténé si JSZip non disponible
+    const bundle = [cert_pem, key_pem].filter(Boolean).join('\n');
+    triggerDownload(bundle, `${keyName}-bundle.pem`, 'application/x-pem-file');
+    showToast(`Bundle PEM de "${keyName}" téléchargé.`);
+    return;
+  }
+
+  const zip = new JSZip();
+  zip.file(`${keyName}.crt.pem`, cert_pem);
+  if (key_pem) zip.file(`${keyName}.key.pem`, key_pem);
+  zip.file('README.txt',
+    `Bundle PKI — ${pkiName} / ${keyName}\n` +
+    `Généré le ${new Date().toLocaleString('fr-FR')}\n\n` +
+    `Fichiers :\n` +
+    `  ${keyName}.crt.pem  — certificat X.509\n` +
+    (key_pem ? `  ${keyName}.key.pem  — clé privée (CONFIDENTIEL)\n` : '') +
+    `\nImport Apache : SSLCertificateFile / SSLCertificateKeyFile\n` +
+    `Import Nginx   : ssl_certificate / ssl_certificate_key\n`
+  );
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  triggerDownload(URL.createObjectURL(blob), `${pkiName}-${keyName}-bundle.zip`);
+  showToast(`Bundle ZIP de "${keyName}" téléchargé.`);
+}
+
+// ---------------------------------------------------------------------------
+// Commandes CLI
+// ---------------------------------------------------------------------------
+function showCliCommands(pkiName) {
+  _cliPkiName = pkiName;
+  document.getElementById('cli-pki-name-label').textContent = pkiName;
+
+  const host = '127.0.0.1';
+  const user = STATE.username || '<user>';
+  const cmds = [
+    `# ── Connexion ────────────────────────────────────────────────────────`,
+    `python src/client.py -H ${host} -u ${user} -p`,
+    `python src/client.py -H ::1 -6 -u ${user} -p      # IPv6`,
+    ``,
+    `# ── Contexte PKI : ${pkiName} ──────────────────────────────────────────`,
+    `pki ctx ${pkiName}                                  # entrer dans le contexte`,
+    ``,
+    `# ── Clés ─────────────────────────────────────────────────────────────`,
+    `keygen <nom> RSA 2048                               # clé RSA 2048 bits`,
+    `keygen <nom> RSA 4096                               # clé RSA 4096 bits`,
+    `keygen <nom> EC secp256r1                           # courbe P-256`,
+    `list keys                                           # lister les clés`,
+    `show privkey <nom>                                  # afficher clé privée`,
+    `keypem <nom>                                        # exporter en PEM`,
+    ``,
+    `# ── CSR ──────────────────────────────────────────────────────────────`,
+    `req csr <nom> CN=<common-name>                      # générer une CSR`,
+    `list csr                                            # lister les CSR`,
+    ``,
+    `# ── Signature ────────────────────────────────────────────────────────`,
+    `sign crt <nom> <nom>     365                        # auto-signé 1 an`,
+    `sign crt <leaf> <ca>     365                        # signé par CA`,
+    `sign crt <nom> <nom>     3650                       # CA longue durée`,
+    `list crt                                            # lister les certificats`,
+    `show crt <nom>                                      # détails du certificat`,
+    `crtpem <nom>                                        # exporter cert en PEM`,
+    ``,
+    `# ── Révocation / CRL ─────────────────────────────────────────────────`,
+    `revoke <nom>                                        # révoquer un certificat`,
+    `crlgen <ca-nom> 30                                  # générer CRL (valide 30j)`,
+    `crlget <ca-nom>                                     # récupérer le PEM de la CRL`,
+    ``,
+    `# ── Vérification ─────────────────────────────────────────────────────`,
+    `verify crt <leaf> <ca>                              # vérifier la chaîne`,
+    `pki tree                                            # arbre de certification`,
+  ].join('\n');
+
+  document.getElementById('cli-content').textContent = cmds;
+  new bootstrap.Modal(document.getElementById('modal-cli')).show();
+}
+
+function copyCliCommands() {
+  const content = document.getElementById('cli-content').textContent;
+  navigator.clipboard.writeText(content).then(() => showToast('Commandes copiées.'));
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +377,9 @@ function navigateTo(section) {
   document.getElementById('section-' + section)?.classList.remove('d-none');
   document.querySelectorAll('.nav-link[data-section]').forEach(a =>
     a.classList.toggle('active', a.dataset.section === section));
+
+  // Stopper l'auto-refresh si on quitte les journaux
+  if (section !== 'logs') stopLogsAutoRefresh();
 
   switch (section) {
     case 'dashboard': loadDashboard(); break;
@@ -432,6 +581,8 @@ async function togglePKIDetails(name) {
                         onclick="showCertInfo('${escHtml(name)}','${escHtml(c.key_name)}')">Info</button>
                 <button class="btn btn-xs btn-outline-secondary"
                         onclick="exportPEM('${escHtml(name)}','${escHtml(c.key_name)}')">PEM</button>
+                <button class="btn btn-xs btn-outline-primary"
+                        onclick="downloadBundle('${escHtml(name)}','${escHtml(c.key_name)}')">Bundle</button>
                 <button class="btn btn-xs btn-outline-dark"
                         onclick="downloadCRL('${escHtml(name)}','${escHtml(c.key_name)}')">CRL</button>
                 ${!c.revoked ? `<button class="btn btn-xs btn-outline-warning"
@@ -462,6 +613,7 @@ async function togglePKIDetails(name) {
           <button class="btn btn-sm btn-outline-primary"  onclick="openKeygen('${escHtml(name)}')">+ Clé</button>
           <button class="btn btn-sm btn-outline-secondary" onclick="openCSR('${escHtml(name)}')">+ CSR</button>
           <button class="btn btn-sm btn-outline-success"  onclick="openSign('${escHtml(name)}')">Signer</button>
+          <button class="btn btn-sm btn-outline-dark"     onclick="showCliCommands('${escHtml(name)}')">CLI</button>
         </div>
       </div>
       <div class="col-md-5">
@@ -733,7 +885,11 @@ async function loadLogs() {
     return;
   }
   _allLogs = [...(res.data || [])].reverse();
+  _lastLogsCount = _allLogs.length;
   _logsPage = 0;
+  // Réinitialiser le badge sidebar
+  _pendingLogsCount = 0;
+  updateSidebarLogsBadge(0);
   renderLogs(_allLogs);
   document.getElementById('logs-search').oninput = function () {
     const q = this.value.toLowerCase();
@@ -741,6 +897,8 @@ async function loadLogs() {
     renderLogs(_allLogs.filter(l =>
       Object.values(l).some(v => String(v).toLowerCase().includes(q))));
   };
+  // Démarrer le rafraîchissement automatique toutes les 30s
+  startLogsAutoRefresh();
 }
 
 function renderLogs(logs) {

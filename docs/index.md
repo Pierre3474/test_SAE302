@@ -40,24 +40,37 @@ Ce projet implémente une **infrastructure PKI (Public Key Infrastructure)** com
     - Logs d'audit horodatés (fichier + base de données)
     - Interface web Bootstrap 5 (port 8080)
 
+## Première installation
+
+```bash
+# 1. Cloner le projet et lancer le setup
+chmod +x setup.sh
+./setup.sh
+```
+
+> `setup.sh` installe les dépendances Python, crée le `.env` depuis `.env.example`, et démarre Docker.
+
 ## Démarrage rapide
 
 ```bash
-# 1. Lancer PostgreSQL
-docker compose up -d
+# 1. Lancer PostgreSQL + initialiser la DB
+make db-reset
 
-# 2. Démarrer le serveur
-python src/server.py
+# 2. Démarrer le serveur PKI + interface web
+make start
 
 # 3. Connexion client (IPv4)
 python src/client.py -H 127.0.0.1 -u admin -p
+# mot de passe par défaut : admin
 
 # 4. Connexion client (IPv6)
 python src/client.py -H ::1 -6 -u admin -p
 
 # 5. Interface web
-python src/server.py --web
 # → http://localhost:8080
+
+# 6. Arrêter les serveurs
+make stop
 ```
 
 ## Architecture

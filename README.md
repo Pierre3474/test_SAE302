@@ -33,14 +33,16 @@ Application **client/serveur TCP** de gestion d'infrastructure à clés publique
 ## Démarrage rapide
 
 ```bash
-# Cloner et installer
+# 1. Cloner le projet
 git clone <url> && cd test_SAE302
-pip install -r requirements.txt
 
-# Tout lancer en une commande (DB + serveur + démo)
+# 2. Première installation (dépendances, .env, Docker)
+chmod +x setup.sh && ./setup.sh
+
+# 3. Lancer tout (DB + serveur + démo)
 make start-demo
 
-# Ouvrir le navigateur
+# 4. Ouvrir le navigateur
 open http://localhost:8080   # admin / admin
 ```
 

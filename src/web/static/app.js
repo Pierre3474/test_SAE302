@@ -35,6 +35,11 @@ async function api(method, path, body = null) {
   try {
     const res = await fetch('/api' + path, opts);
     const data = await res.json();
+    // Si le token est expiré côté serveur, retour automatique à la connexion
+    if (res.status === 401 && path !== '/login') {
+      clearAuth();
+      showLoginPage();
+    }
     return { ok: res.ok, status: res.status, data };
   } catch (e) {
     return { ok: false, status: 0, data: { error: e.message } };
@@ -411,11 +416,72 @@ async function loadUsers() {
       <td>${u.enabled
         ? '<span class="badge bg-success">Actif</span>'
         : '<span class="badge bg-secondary">Désactivé</span>'}</td>
-      <td>${u.totp_enabled ? '<span class="badge bg-info">TOTP</span>' : '—'}</td>
+      <td>
+        ${u.totp_enabled
+          ? `<span class="badge bg-success me-1">Actif</span>
+             <button class="btn btn-xs btn-outline-warning" onclick="totpDisable('${escHtml(u.username)}')">Désactiver</button>`
+          : `<span class="badge bg-secondary me-1">Inactif</span>
+             <button class="btn btn-xs btn-outline-info" onclick="totpSetup('${escHtml(u.username)}')">Configurer</button>`
+        }
+      </td>
       <td>
         <button class="btn btn-xs btn-outline-danger" onclick="deleteUser('${escHtml(u.username)}')">Supprimer</button>
       </td>
     </tr>`).join('');
+}
+
+// ---------------------------------------------------------------------------
+// Gestion TOTP (2FA)
+// ---------------------------------------------------------------------------
+
+// Nom d'utilisateur en cours de configuration TOTP (pour le bouton "Activer")
+let _totpUsername = null;
+
+async function totpSetup(username) {
+  _totpUsername = username;
+  const res = await api('POST', `/users/${encodeURIComponent(username)}/totp/setup`);
+  if (!res.ok) {
+    showToast(res.data.error || 'Échec de la configuration TOTP.', 'error');
+    return;
+  }
+
+  // Affiche le secret en texte
+  document.getElementById('totp-secret').value = res.data.secret || '';
+
+  // Génère le QR code dans le modal
+  const qrEl = document.getElementById('totp-qr');
+  qrEl.innerHTML = '';
+  if (res.data.uri) {
+    const canvas = document.createElement('canvas');
+    qrEl.appendChild(canvas);
+    QRCode.toCanvas(canvas, res.data.uri, { width: 200, margin: 1 }, err => {
+      if (err) qrEl.innerHTML = `<code class="small">${escHtml(res.data.uri)}</code>`;
+    });
+  }
+
+  new bootstrap.Modal(document.getElementById('modal-totp')).show();
+}
+
+async function totpEnable(username) {
+  const res = await api('POST', `/users/${encodeURIComponent(username)}/totp/enable`);
+  if (res.ok) {
+    showToast(`2FA activé pour "${username}".`);
+    bootstrap.Modal.getInstance(document.getElementById('modal-totp'))?.hide();
+    loadUsers();
+  } else {
+    showToast(res.data.error || 'Échec de l\'activation TOTP.', 'error');
+  }
+}
+
+async function totpDisable(username) {
+  if (!confirm(`Désactiver le 2FA pour "${username}" ?`)) return;
+  const res = await api('POST', `/users/${encodeURIComponent(username)}/totp/disable`);
+  if (res.ok) {
+    showToast(`2FA désactivé pour "${username}".`);
+    loadUsers();
+  } else {
+    showToast(res.data.error || 'Échec de la désactivation TOTP.', 'error');
+  }
 }
 
 async function deleteUser(username) {
@@ -616,6 +682,11 @@ document.addEventListener('DOMContentLoaded', () => {
     navigator.clipboard.writeText(text).then(() => showToast('Copié dans le presse-papiers.'));
   });
 
+  // ----- Bouton "Activer le 2FA" dans le modal TOTP -----
+  document.getElementById('btn-totp-enable').addEventListener('click', () => {
+    if (_totpUsername) totpEnable(_totpUsername);
+  });
+
   // ----- Bouton "Ajouter un utilisateur" -----
   document.getElementById('btn-add-user').addEventListener('click', () => {
     document.getElementById('add-user-name').value     = '';
@@ -646,25 +717,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ----- Vérification initiale de la session au chargement de la page -----
+  // ----- Initialisation : affiche l'app si un token existe, sinon la connexion -----
+  // Les appels API gèrent automatiquement les 401 (token expiré → retour connexion)
   if (STATE.token) {
-    // Sauvegarde le token avant la vérification asynchrone pour détecter
-    // si l'utilisateur se connecte manuellement pendant la vérification
-    const tokenAvantVerif = STATE.token;
-    api('GET', '/pki/list').then(res => {
-      // Si le token a changé entre-temps (connexion manuelle réussie), on ignore ce résultat
-      if (STATE.token !== tokenAvantVerif) return;
-      if (res.status === 401) {
-        // Token expiré ou invalide : retour à la page de connexion
-        clearAuth();
-        showLoginPage();
-      } else {
-        // Token valide : affiche directement l'application
-        showApp();
-      }
-    });
+    showApp();
   } else {
-    // Aucun token : affiche la page de connexion
     showLoginPage();
   }
 });

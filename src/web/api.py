@@ -484,6 +484,53 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True, "message": resp})
             return
 
+        # POST /api/users/<username>/totp/setup  (admin uniquement)
+        m = re.match(r"^/api/users/([^/]+)/totp/setup$", p)
+        if m:
+            if session.role != "admin":
+                self._send_error(403, "Forbidden")
+                return
+            uname = m.group(1)
+            resp = self._proxy_command(session, f"users totp setup {uname}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+                return
+            # Extraction de l'URI otpauth:// dans la réponse texte du serveur
+            uri_match = re.search(r"(otpauth://[^\s]+)", resp)
+            secret_match = re.search(r"Secret \(base32\)\s*:\s*(\S+)", resp)
+            uri = uri_match.group(1) if uri_match else ""
+            secret = secret_match.group(1) if secret_match else ""
+            self._send_json(200, {"ok": True, "uri": uri, "secret": secret})
+            return
+
+        # POST /api/users/<username>/totp/enable  (admin uniquement)
+        m = re.match(r"^/api/users/([^/]+)/totp/enable$", p)
+        if m:
+            if session.role != "admin":
+                self._send_error(403, "Forbidden")
+                return
+            uname = m.group(1)
+            resp = self._proxy_command(session, f"users totp enable {uname}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"ok": True, "message": resp})
+            return
+
+        # POST /api/users/<username>/totp/disable  (admin uniquement)
+        m = re.match(r"^/api/users/([^/]+)/totp/disable$", p)
+        if m:
+            if session.role != "admin":
+                self._send_error(403, "Forbidden")
+                return
+            uname = m.group(1)
+            resp = self._proxy_command(session, f"users totp disable {uname}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"ok": True, "message": resp})
+            return
+
         # POST /api/users
         if p == "/api/users":
             if session.role != "admin":
@@ -579,5 +626,8 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", str(len(body)))
+        # Désactive le cache navigateur pour les fichiers JS/CSS (développement)
+        if ext in (".js", ".css", ".html"):
+            self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)

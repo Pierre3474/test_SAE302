@@ -60,71 +60,73 @@
 
 ---
 
-## 3. DÉMONSTRATION (8 min)
+## 3. DÉMONSTRATION (7 min)
 
-### Avant de commencer : démarrer l'environnement
+### ⚡ Avant de commencer — Démarrer l'environnement
 ```bash
-# Terminal 1 — Base de données
+# Terminal 1 — Démarrer DB + Serveur + Web
 docker compose up -d
+python src/server.py --web
 
-# Terminal 2 — Serveur
-python src/server.py
+# Dans un autre terminal — Initialiser la démo (une seule fois)
+python scripts/setup_demo.py
+```
 
-# Terminal 3 — Client admin
+### 3.1 — Interface Web (2 min) ← COMMENCER PAR LÀ, plus visuel
+```
+Ouvrir http://localhost:8080
+→ Login admin / admin
+→ Dashboard : compteurs PKI, certs valides/révoqués
+→ PKI ca1 → Détails → montrer les 4 certificats (dont 1 révoqué en rouge)
+→ Cliquer "Bundle" → télécharger cert + clé privée en ZIP
+→ Cliquer "CLI" → afficher les commandes équivalentes
+→ Journaux → badge LIVE, bouton CSV
+→ Matrice RBAC (sidebar) → montrer admin/editor/viewer
+→ Mode sombre (bouton 🌙)
+```
+
+### 3.2 — CLI admin (2 min)
+```bash
 python src/client.py -H 127.0.0.1 -u admin -p
 # password: admin
 ```
-
-### 3.1 — Gestion des utilisateurs (2 min)
 ```
-pkicli# users list
-pkicli# users create alice AliceP@ss editor
-pkicli# users create bob BobP@ss viewer
-pkicli# users infos alice
-pkicli# users disable bob
-pkicli# users enable bob
-```
-
-### 3.2 — Gestion des PKI (2 min)
-```
-pkicli# pki add ca1 CN=CA1,O=SAE302,C=FR RSA 4096
-pkicli# pki add ca2 CN=CA2,O=SAE302,C=FR EC secp384r1
-pkicli# pki list
-pkicli# pki infos ca1
-```
-
-### 3.3 — Opérations PKI (certificats) (3 min)
-```
+pkicli# users list                   ← montrer alice, bob
+pkicli# pki list                     ← ca1, ca2
 pkicli# pki update ca1
-pkicli[ca1]# list keys
-pkicli[ca1]# keygen srv RSA 2048
-pkicli[ca1]# req csr srv CN=web.sae302.fr,O=SAE302,C=FR KU=DS,KE EKU=SRV SAN=DNS:web.sae302.fr
-pkicli[ca1]# sign crt srv ca1 365
-pkicli[ca1]# list crt
-pkicli[ca1]# show crt srv
-pkicli[ca1]# revoke srv
-pkicli[ca1]# crlgen ca1 30
-pkicli[ca1]# bye
+pkicli[ca1]# list crt                ← srv-web valide, srv-mail RÉVOQUÉ
+pkicli[ca1]# show crt srv-web        ← détails X.509
+pkicli[ca1]# verify crt srv-web ca1root   ← vérification chaîne → [OK]
+pkicli[ca1]# verify crt srv-mail ca1root  ← RÉVOQUÉ → [FAIL]
 ```
 
-### 3.4 — Gestion des droits (1 min)
-```
-pkicli# users update alice addpki ca1
-pkicli# users infos alice
-```
+### 3.3 — RBAC : isolement editor/viewer (2 min)
 ```bash
-# Nouveau terminal — connexion alice
+# Nouveau terminal — connexion alice (editor)
 python src/client.py -H 127.0.0.1 -u alice -p
-# password: AliceP@ss
+# password: Secure@P4ssw0rd!
 ```
 ```
-pkicli> pki list          # Ne voit que ca1
-pkicli> pki infos ca2     # ERREUR accès refusé
+pkicli> pki list                ← voit ca1 (assignée)
+pkicli> pki update ca2          ← ERREUR accès refusé
+pkicli> pki update ca1
+pkicli[ca1]> keygen newkey RSA 2048  ← editor PEUT créer des clés
+pkicli[ca1]> users list         ← ERREUR (viewer/editor ne peut pas)
+```
+```bash
+# Connexion bob (viewer)
+python src/client.py -H 127.0.0.1 -u bob -p
+# password: Secure#P4ssw0rd!
+```
+```
+pkicli> pki update ca1
+pkicli[ca1]> list crt           ← peut lire
+pkicli[ca1]> keygen test RSA    ← ERREUR viewer ne peut pas créer
 ```
 
-### 3.5 — Audit logs (30 sec)
+### 3.4 — Logs d'audit (30 sec)
 ```bash
-cat logs/$(date +%Y-%m-%d).log
+cat logs/$(date +%Y-%m-%d).log   ← toutes les actions horodatées
 ```
 
 ---
@@ -133,60 +135,48 @@ cat logs/$(date +%Y-%m-%d).log
 
 ### 4.1 — IPv6 (TP3)
 ```bash
-# Serveur en IPv6 :
-SERVER_IPV6=1 python src/server.py
+# Serveur IPv6 (nouveau terminal) :
+SERVER_IPV6=1 SERVER_PORT=7891 python src/server.py
 
-# Client en IPv6 :
+# Client IPv6 :
 python src/client.py -H ::1 -6 -u admin -p
 ```
-**Expliquer :** `-4` et `-6` sont mutuellement exclusifs. Le serveur utilise `AF_INET6` avec `IPV6_V6ONLY=1`.
+**Expliquer :** `-4` et `-6` sont mutuellement exclusifs. Serveur : `AF_INET6` + `IPV6_V6ONLY=1`. L'IP loggée devient `::1`.
 
 ### 4.2 — TOTP / 2FA (TP3)
 ```
+# Dans le Web UI → Mon profil → Configurer le 2FA
+# Scanner le QR code avec Google Authenticator
+# 8 codes de récupération à usage unique générés
+```
+```
+# En CLI :
 pkicli# users totp setup admin
-# → Affiche le secret base32 + URI provisioning → scanner avec FreeOTP
-
-pkicli# users totp enable admin
+pkicli# users totp enable admin <code6chiffres>
 pkicli# bye
+# Reconnexion : demande le code OTP automatiquement
 ```
-```bash
-python src/client.py -H 127.0.0.1 -u admin -p
-# password: ***
-# Code OTP (FreeOTP): 123456
-```
-**Expliquer :** RFC 6238 (TOTP), `pyotp`. Synchronisation NTP requise (dérive max ±30s).
+**Expliquer :** RFC 6238, `pyotp`. Codes de récupération format `XXXXXX-XXXXXX`, stockés hashés, usage unique.
 
-### 4.3 — TLS (TP1 option)
+### 4.3 — Interface Web (BONUS +++)
+**Features démontrables :**
+- Login sécurisé (même challenge-response que CLI)
+- Dashboard avec graphique camembert (Chart.js)
+- Génération de clé RSA/EC avec sélection dynamique des courbes
+- Renouvellement de certificat (bouton Renouveler)
+- Export bundle ZIP (cert + clé privée + README)
+- Mode sombre persistant (localStorage)
+- Auto-refresh logs toutes les 30s avec badge "● LIVE"
+- Matrice RBAC visuelle (sidebar admin)
+- Checklist de complexité mot de passe en temps réel
+- Export CSV des journaux d'audit
+
+### 4.4 — TLS (TP1 option)
 ```bash
-# Générer le certificat TLS auto-signé :
 python scripts/gen_tls_cert.py
-
-# Serveur avec TLS :
 python src/server.py --tls --tls-cert certs/server.crt --tls-key certs/server.key
-
-# Client avec TLS :
 python src/client.py -H 127.0.0.1 -u admin -p --tls --no-verify
 ```
-**Expliquer :** `ssl.SSLContext(PROTOCOL_TLS_SERVER)`, le handshake TLS s'intercale avant le protocole XOR. Double sécurité : TLS (confidentialité + intégrité) + XOR (exigence du sujet).
-
-### 4.4 — Interface Web (BONUS +++!)
-```bash
-# Démarrer le serveur avec l'interface web :
-python src/server.py --web
-
-# Ou séparément :
-python src/web/app.py
-```
-**Ouvrir http://127.0.0.1:8080 dans le navigateur**
-
-Features de l'interface web :
-- Login avec challenge-response (même sécurité que le client CLI)
-- Dashboard : compteurs PKI, utilisateurs, activité
-- Gestion PKI : créer, supprimer, voir les clés et certificats
-- Génération de clé, CSR, signature, révocation, export PEM
-- Gestion utilisateurs (admin)
-- Logs d'audit (admin)
-- Responsive Bootstrap 5, aucun framework backend (Python stdlib uniquement)
 
 ---
 
@@ -196,68 +186,84 @@ Features de l'interface web :
 ```bash
 python -m pytest tests/ -v --tb=short
 ```
-**5 fichiers de tests, 202 tests :**
+**5 fichiers de tests, 265 tests, 0 échec :**
 - `test_crypto.py` — XorCipher, RSA, CSR, hash
-- `test_auth.py` — Argon2id, RBAC, accès PKI
-- `test_users.py` — Login, challenge-response, CRUD users
-- `test_pki.py` — CRUD PKI, keygen, CSR, signature, révocation
+- `test_auth.py` — Argon2id, RBAC, accès PKI, TOTP, codes de récupération
+- `test_users.py` — Login, challenge-response, CRUD users, lockout
+- `test_pki.py` — CRUD PKI, keygen, CSR, signature, révocation, CRL
 - `test_droits.py` — Matrice complète admin/editor/viewer
 
 ### Points de qualité à mentionner
-- **Code documenté** : docstrings sur toutes les fonctions publiques
-- **Modularité** : chaque module a une responsabilité unique (SRP)
-- **Sécurité** :
+- **Sécurité défense en profondeur** :
   - Argon2id (état de l'art) pour les mots de passe
-  - Challenge-response : le mot de passe ne transite jamais sur le réseau
+  - Challenge-response SHA256 : mot de passe jamais sur le réseau
+  - TOTP RFC 6238 avec codes de récupération à usage unique
+  - Verrouillage brute-force (5 tentatives → 15 min)
   - RBAC strict + isolation des PKI par utilisateur
-  - Framing 10 octets contre les attaques par fragmentation
-- **Git** : commits atomiques, messages explicites
-- **Docker** : environnement reproductible (PostgreSQL + pgAdmin)
+- **Code modulaire** : chaque module a une responsabilité unique (SRP)
+- **Logs d'audit** horodatés fichier + base de données
+- **Docker** : environnement reproductible
 
 ---
 
 ## QUESTIONS POSSIBLES ET RÉPONSES
 
 **Q : Pourquoi XOR et pas AES pour le chiffrement des échanges ?**
-> XOR est demandé par le sujet (TP1 : "tester avec un chiffrement par flot"). C'est pédagogique. En production, on utiliserait TLS (option implémentable avec `ssl.wrap_socket()`).
+> XOR est demandé par le sujet (TP1). C'est pédagogique. En production on utilise TLS — qu'on a aussi implémenté en option (`--tls`).
 
 **Q : Quelle est la différence entre editor et viewer ?**
-> Editor peut modifier les PKI qui lui sont assignées (keygen, signer, révoquer). Viewer ne peut que lire (list, show, export PEM). Seul l'admin peut créer/supprimer des PKI et gérer les utilisateurs.
+> Editor peut modifier les PKI assignées (keygen, signer, révoquer). Viewer ne lit que (list, show, export PEM). Seul l'admin crée/supprime des PKI et gère les utilisateurs. Voir la matrice RBAC dans le Web UI.
 
 **Q : Comment fonctionne le challenge-response ?**
-> 1. Serveur génère un token aléatoire (hex 32 chars)
+> 1. Serveur génère un token aléatoire hex 32 chars
 > 2. Client calcule `SHA256(challenge + SHA256(password))`
-> 3. Serveur stocke `SHA256(password)` en base et recalcule la même chose
-> Avantage : le mot de passe ne circule jamais sur le réseau, même chiffré XOR.
+> 3. Serveur a stocké `SHA256(password)` en base, recalcule et compare
+> Le mot de passe ne circule jamais sur le réseau, même chiffré.
 
 **Q : Pourquoi PostgreSQL et pas SQLite ?**
-> Multi-clients simultanés : PostgreSQL gère les accès concurrents avec un pool de connexions (`ThreadedConnectionPool`). SQLite en mode fichier ne supporte pas la concurrence en écriture.
+> Multi-clients simultanés : PostgreSQL gère la concurrence avec `ThreadedConnectionPool`. SQLite ne supporte pas les écritures concurrentes.
 
 **Q : Comment fonctionne la synchronisation TOTP ?**
-> TOTP est basé sur `HOTP(secret, floor(time/30))`. Le téléphone et le serveur doivent avoir la même heure (NTP). On tolère ±1 période (30 secondes de décalage). Sans NTP, si l'horloge dérive de plus de 30s, le code devient invalide.
+> TOTP = `HOTP(secret, floor(time/30))`. Le téléphone et le serveur doivent avoir la même heure (NTP). Fenêtre de ±30s tolérée (`valid_window=1` dans pyotp).
 
 **Q : Comment fonctionne TLS par-dessus XOR ?**
-> On a utilisé `ssl.SSLContext(PROTOCOL_TLS_SERVER)` qui wrape la socket TCP avant le protocole applicatif. Le handshake TLS établit un tunnel chiffré (AES-GCM en pratique), puis nos messages XOR circulent dans ce tunnel. Double couche : TLS assure la confidentialité et l'intégrité, XOR respecte l'exigence du sujet.
+> `ssl.SSLContext` wrape la socket TCP avant le protocole applicatif. TLS établit un tunnel chiffré (AES-GCM), puis nos messages XOR circulent dedans. Double couche : TLS assure confidentialité + intégrité, XOR respecte l'exigence du sujet.
 
 **Q : Pourquoi une interface web sans Flask/Django ?**
-> Le sujet demande Python pur. `http.server.BaseHTTPRequestHandler` + `ThreadingMixIn` suffisent. L'interface web proxie les commandes vers le serveur TCP existant, donc aucune logique PKI n'est dupliquée.
+> Le sujet demande Python pur. `BaseHTTPRequestHandler` suffit. Le Web UI proxie vers le serveur TCP existant — aucune logique PKI dupliquée.
 
-**Q : L'interface web n'est-elle pas un risque de sécurité ?**
-> Elle utilise la même authentification challenge-response que le client CLI. Les tokens de session ont un TTL de 3600s. Les routes sensibles vérifient le rôle. Les entrées utilisateur sont validées avant d'être envoyées au serveur TCP.
+**Q : L'interface web est-elle sécurisée ?**
+> Même challenge-response que le CLI. Tokens de session TTL 3600s. Routes vérifiées par rôle. Connexion TCP persistante par session (évite la ré-authentification TOTP à chaque requête).
+
+**Q : Qu'est-ce qu'un code de récupération TOTP ?**
+> 8 codes `XXXXXX-XXXXXX` générés à la configuration du 2FA. Stockés en JSON dans la DB. Chacun est utilisable une seule fois en cas de perte du téléphone.
 
 ---
 
 ## CHECKLIST AVANT LA PRÉSENTATION
 
-- [ ] `docker compose up -d` fonctionne
-- [ ] `python src/server.py` démarre sans erreur
-- [ ] `python src/client.py -H 127.0.0.1 -u admin -p` se connecte
-- [ ] `python -m pytest tests/ -v` → **202 tests passent**
-- [ ] `python scripts/gen_tls_cert.py` → certs/server.crt et server.key générés
-- [ ] `python src/server.py --web` → http://127.0.0.1:8080 accessible
-- [ ] TOTP configuré sur le téléphone (optionnel pour la démo)
-- [ ] Terminal prêt avec les commandes de démo copiées
-- [ ] Logs du jour visibles dans `logs/`
+```bash
+# 1. Démarrer l'environnement
+docker compose up -d
+python src/server.py --web
+
+# 2. Initialiser l'état de démo
+python scripts/setup_demo.py
+
+# 3. Vérifier les tests
+python -m pytest tests/ -q   # → 265 passed
+
+# 4. Vérifier le Web UI
+open http://localhost:8080    # admin / admin
+```
+
+- [ ] `docker compose up -d` → PostgreSQL healthy
+- [ ] `python src/server.py --web` → démarrage sans erreur
+- [ ] `python scripts/setup_demo.py` → "✓ Démo prête !"
+- [ ] `python -m pytest tests/ -q` → **265 passed**
+- [ ] Web UI login admin/admin → dashboard avec données
+- [ ] Matrice RBAC accessible (sidebar admin)
+- [ ] Téléphone avec Google Authenticator prêt (si démo TOTP)
 
 ---
 
@@ -266,13 +272,10 @@ python -m pytest tests/ -v --tb=short
 ```bash
 git clone <url> && cd test_SAE302
 pip install -r requirements.txt
-cp .env.example .env
-# Editer .env : mettre POSTGRES_PASSWORD=monpassword
-
 docker compose up -d
-python src/server.py --web &        # TCP:7890 + Web:8080
-python src/client.py -H 127.0.0.1 -u admin -p
-# Ou ouvrir http://127.0.0.1:8080 dans le navigateur
+python src/server.py --web &
+python scripts/setup_demo.py
+# → http://localhost:8080  (admin / admin)
 ```
 
 ---

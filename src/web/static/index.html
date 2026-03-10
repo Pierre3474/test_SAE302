@@ -66,6 +66,12 @@
     </div>
   </nav>
 
+  <!-- Bannière 2FA obligatoire (affichée si TOTP non configuré) — placée après la navbar -->
+  <div id="totp-required-banner" class="totp-banner d-none">
+    <span>⚠ <strong>2FA non configuré.</strong> Activez le TOTP pour accéder à l'application.</span>
+    <button class="btn btn-sm btn-warning ms-3" onclick="navigateTo('profile')">Configurer maintenant →</button>
+  </div>
+
   <div class="container-fluid">
     <div class="row">
 
@@ -83,6 +89,11 @@
           </li>
           <li class="nav-item admin-only d-none">
             <a class="nav-link" href="#logs" data-section="logs">Journaux</a>
+          </li>
+          <li class="nav-item admin-only d-none">
+            <a class="nav-link" href="#" onclick="showRbacMatrix();return false;">
+              Matrice RBAC <span class="badge bg-secondary" style="font-size:0.6rem;">RBAC</span>
+            </a>
           </li>
           <li class="nav-item">
             <a class="nav-link" href="#profile" data-section="profile">Mon profil</a>
@@ -478,7 +489,7 @@
 
 <!-- Modal TOTP -->
 <div class="modal fade" id="modal-totp" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog" id="modal-totp-dialog">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">Configuration TOTP (2FA)</h5>
@@ -486,7 +497,7 @@
       </div>
       <div class="modal-body">
         <div class="row g-3">
-          <div class="col-md-6 text-center">
+          <div class="col text-center" id="totp-qr-col">
             <p class="mb-1">Scannez ce QR code avec <strong>Google Authenticator</strong> ou <strong>FreeOTP</strong> :</p>
             <div id="totp-qr" class="my-3 d-flex justify-content-center"></div>
             <hr />
@@ -497,7 +508,7 @@
             <div id="totp-verify-error" class="alert alert-danger d-none py-2 mb-2"></div>
             <button class="btn btn-success" id="btn-totp-enable">Activer le 2FA</button>
           </div>
-          <div class="col-md-6" id="totp-recovery-section" style="display:none;">
+          <div class="col-md-6 d-none" id="totp-recovery-section">
             <div class="alert alert-warning py-2 mb-2">
               <strong>⚠ Codes de récupération</strong><br/>
               <small>Conservez ces codes en lieu sûr. Chacun n'est utilisable qu'une seule fois.</small>
@@ -562,6 +573,24 @@
   </div>
 </div>
 
+<!-- Modal Matrice RBAC -->
+<div class="modal fade" id="modal-rbac" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Matrice des permissions RBAC</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="rbac-table-container" class="table-responsive"></div>
+      </div>
+      <div class="modal-footer text-muted small">
+        Défini dans <code>src/core/auth.py</code> — matrice statique vérifiée à chaque commande.
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Conteneur de toasts -->
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container"></div>
 
@@ -571,6 +600,6 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

@@ -992,6 +992,15 @@ def _handle_pki_context(session, pki: dict, args: list, db) -> str:
                   user_id=session.user_id, ip=session.ip, db=db)
         return result
 
+    elif cmd == "crlget":
+        # Retourne le PEM de la derniere CRL stockee en base (apres crlgen)
+        if len(args) < 2:
+            return "[ERREUR] Usage : crlget <ca_id>"
+        crl_data = db.get_latest_crl(pki_id)
+        if not crl_data:
+            return "[ERREUR] Aucune CRL trouvee. Lancez d'abord : crlgen <ca>"
+        return crl_data["crl_pem"]
+
     elif cmd == "verify":
         if len(args) < 2 or args[1].lower() != "crt":
             return "[ERREUR] Usage : verify crt <key> <ca_key>"

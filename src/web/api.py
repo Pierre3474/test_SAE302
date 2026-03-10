@@ -369,15 +369,21 @@ class APIHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # GET /api/pki/<name>/crl/<ca_key> — génère la CRL pour une CA donnée
+        # GET /api/pki/<name>/crl/<ca_key> — génère la CRL puis retourne son PEM
         m = re.match(r"^/api/pki/([^/]+)/crl/([^/]+)$", p)
         if m:
             name, ca_key = m.group(1), m.group(2)
+            # Étape 1 : génération de la CRL (stockage en DB)
             resp = self._proxy_command(session, f"pki ctx {name} crlgen {ca_key} 30")
             if resp is None or _is_error(resp):
                 self._send_error(400, resp or "Command failed")
+                return
+            # Étape 2 : récupération du PEM depuis la DB
+            pem = self._proxy_command(session, f"pki ctx {name} crlget {ca_key}")
+            if pem is None or _is_error(pem):
+                self._send_error(400, pem or "CRL retrieval failed")
             else:
-                self._send_json(200, {"pem": resp})
+                self._send_json(200, {"pem": pem, "message": resp})
             return
 
         # GET /api/pki/<name>/cert/<key>/info — affiche les informations d'un certificat

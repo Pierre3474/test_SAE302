@@ -19,6 +19,8 @@ class WebSession:
         self.role = role
         self.last_activity = time.time()
         self.lock = threading.Lock()
+        # Connexion TCP persistante vers le serveur PKI (evite la ré-auth TOTP a chaque requete)
+        self._proxy = None
 
     def touch(self):
         """Update last activity timestamp."""

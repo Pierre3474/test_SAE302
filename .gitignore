@@ -1,0 +1,30 @@
+# ============================================================
+# Fichiers sensibles — ne JAMAIS commiter
+# ============================================================
+
+# Variables d'environnement (mots de passe, IP, config)
+.env
+
+# Cles privees et certificats
+*.pem
+*.csr
+keys/
+
+# Python
+__pycache__/
+*.pyc
+
+# Tests / pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Logs serveur
+logs/*.log
+
+# Docker volumes
+postgres_data/
+
+# Brouillons
+SAE303/
+drafts/

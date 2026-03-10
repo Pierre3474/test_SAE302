@@ -308,14 +308,18 @@
         </div>
         <div class="mb-3">
           <label class="form-label">Algorithme</label>
-          <select class="form-select" id="keygen-algorithm">
+          <select class="form-select" id="keygen-algorithm" onchange="updateKeySizeOptions()">
             <option value="RSA">RSA</option>
-            <option value="EC">EC</option>
+            <option value="EC">EC (courbe elliptique)</option>
           </select>
         </div>
         <div class="mb-3">
           <label class="form-label">Taille / Courbe</label>
-          <input type="text" class="form-control" id="keygen-key-size" value="2048" />
+          <select class="form-select" id="keygen-key-size">
+            <option value="2048">2048 bits</option>
+            <option value="3072">3072 bits</option>
+            <option value="4096">4096 bits</option>
+          </select>
         </div>
         <div id="keygen-error" class="alert alert-danger d-none"></div>
       </div>

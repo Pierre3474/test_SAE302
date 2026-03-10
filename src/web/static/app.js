@@ -555,7 +555,25 @@ function openKeygen(pkiName) {
   document.getElementById('keygen-pki-name').value = pkiName;
   document.getElementById('keygen-key-name').value = '';
   document.getElementById('keygen-error').classList.add('d-none');
+  document.getElementById('keygen-algorithm').value = 'RSA';
+  updateKeySizeOptions();
   new bootstrap.Modal(document.getElementById('modal-keygen')).show();
+}
+
+// Met à jour les options de taille/courbe selon l'algorithme sélectionné
+function updateKeySizeOptions() {
+  const algo = document.getElementById('keygen-algorithm').value;
+  const sel  = document.getElementById('keygen-key-size');
+  sel.innerHTML = '';
+  if (algo === 'EC') {
+    [['secp256r1','P-256 (secp256r1)'],['secp384r1','P-384 (secp384r1)'],['secp521r1','P-521 (secp521r1)']].forEach(([v,l]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = l; sel.appendChild(o);
+    });
+  } else {
+    [['2048','2048 bits'],['3072','3072 bits'],['4096','4096 bits']].forEach(([v,l]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = l; sel.appendChild(o);
+    });
+  }
 }
 
 function openCSR(pkiName) {

@@ -119,7 +119,8 @@ def _parse_certs_list(text: str) -> list:
         serial = parts[3] if len(parts) > 3 else ""
         statut = parts[4] if len(parts) > 4 else ""
         validity = parts[5] if len(parts) > 5 else ""
-        revoked = "revok" in statut.lower()
+        # "REVOQUE" (FR) ou "REVOKED" (EN) — on cherche "revo" commun aux deux
+        revoked = "revo" in statut.lower()
         if key_name:
             items.append({
                 "key_name": key_name,
@@ -499,6 +500,10 @@ class APIHandler(BaseHTTPRequestHandler):
             if not key_name:
                 self._send_error(400, "key_name required")
                 return
+            # Pour EC : convertir la taille en nom de courbe (le serveur PKI attend un nom)
+            if algorithm.upper() == "EC":
+                ec_map = {"256": "secp256r1", "384": "secp384r1", "521": "secp521r1"}
+                key_size = ec_map.get(key_size, key_size)
             resp = self._proxy_command(
                 session, f"pki ctx {name} keygen {key_name} {algorithm} {key_size}"
             )
@@ -538,8 +543,9 @@ class APIHandler(BaseHTTPRequestHandler):
             if not key_name:
                 self._send_error(400, "key_name required")
                 return
-            cmd = f"pki ctx {name} sign crt {key_name} {ca_key} {days}" if ca_key else \
-                  f"pki ctx {name} sign crt {key_name}"
+            # Sans ca_key fourni → auto-signature (la clé signe son propre certificat)
+            effective_ca = ca_key if ca_key else key_name
+            cmd = f"pki ctx {name} sign crt {key_name} {effective_ca} {days}"
             resp = self._proxy_command(session, cmd)
             if resp is None or _is_error(resp):
                 self._send_error(400, resp or "Command failed")

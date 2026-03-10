@@ -242,3 +242,14 @@ body.dark .totp-banner {
   color: #842029;
   text-decoration: line-through;
 }
+
+/* Footer */
+#app-footer {
+  background-color: #f8f9fa;
+  font-size: 0.78rem;
+}
+body.dark #app-footer {
+  background-color: #1e2130;
+  border-color: #3a3d47 !important;
+  color: #8a8fa0 !important;
+}

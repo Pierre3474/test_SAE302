@@ -48,88 +48,75 @@ def _is_error(text: str) -> bool:
     return text is None or text.startswith("ERROR") or text.startswith("[ERREUR]")
 
 
+def _table_rows(text: str) -> list[list[str]]:
+    """
+    Parse a pipe-separated table returned by the PKI server.
+    Skips the header line and the separator line (full of dashes).
+    Returns a list of column lists (stripped strings).
+    """
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or re.match(r"^[-\s|]+$", line):
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        # Skip header row (first column contains no digits)
+        if parts and not re.search(r"\d", parts[0]):
+            continue
+        rows.append(parts)
+    return rows
+
+
 def _parse_pki_list(text: str) -> list:
     """
     Parse server response for 'pki list'.
-    Expected format:
-        PKI list:\n  - name (subject)\n  - name2 (subject2)
-    or simply a list of lines with '- name (subject)'.
+    Table format: ID | Nom | Sujet | Cree le
     """
     items = []
-    for line in text.splitlines():
-        line = line.strip()
-        m = re.match(r"-\s+(\S+)\s+\(([^)]*)\)", line)
-        if m:
-            name, subject = m.group(1), m.group(2)
+    for parts in _table_rows(text):
+        name = parts[1] if len(parts) > 1 else ""
+        subject = parts[2] if len(parts) > 2 else ""
+        if name:
             items.append({"name": name, "subject": subject, "id": name})
-        elif line.startswith("- "):
-            # No subject in parentheses
-            name = line[2:].strip()
-            items.append({"name": name, "subject": "", "id": name})
     return items
 
 
 def _parse_keys_list(text: str) -> list:
     """
     Parse server response for 'list keys'.
-    Expected format:
-        Keys:\n  - keyname (RSA 4096)\n  - keyname2 (EC secp256r1)
+    Table format: ID | Nom | Algo | Taille | Chiffree | Cree le
     """
     items = []
-    for line in text.splitlines():
-        line = line.strip()
-        m = re.match(r"-\s+(\S+)\s+\(([^)]*)\)", line)
-        if m:
-            key_name = m.group(1)
-            algo_info = m.group(2)
-            parts = algo_info.split()
-            algorithm = parts[0] if parts else ""
-            key_size = parts[1] if len(parts) > 1 else ""
-            items.append({
-                "key_name": key_name,
-                "algorithm": algorithm,
-                "key_size": key_size,
-            })
-        elif line.startswith("- "):
-            key_name = line[2:].strip()
-            items.append({"key_name": key_name, "algorithm": "", "key_size": ""})
+    for parts in _table_rows(text):
+        key_name = parts[1] if len(parts) > 1 else ""
+        algorithm = parts[2] if len(parts) > 2 else ""
+        key_size = parts[3] if len(parts) > 3 else ""
+        if key_name:
+            items.append({"key_name": key_name, "algorithm": algorithm, "key_size": key_size})
     return items
 
 
 def _parse_certs_list(text: str) -> list:
     """
     Parse server response for 'list crt'.
-    Tries to extract key_name, subject, serial, not_before, not_after, revoked.
-    Falls back to returning the raw line if structure is unknown.
+    Table format: ID | Cle | Sujet | Serial | Statut | Validite
     """
     items = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.endswith(":"):
-            continue
-        if line.startswith("- "):
-            line = line[2:].strip()
-        # Try structured: name | subject | serial | from | to | [REVOKED]
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) >= 2:
-            revoked = any("REVOK" in p.upper() for p in parts)
+    for parts in _table_rows(text):
+        key_name = parts[1] if len(parts) > 1 else ""
+        subject = parts[2] if len(parts) > 2 else ""
+        serial = parts[3] if len(parts) > 3 else ""
+        statut = parts[4] if len(parts) > 4 else ""
+        validity = parts[5] if len(parts) > 5 else ""
+        revoked = "revok" in statut.lower()
+        if key_name:
             items.append({
-                "key_name": parts[0] if len(parts) > 0 else "",
-                "subject": parts[1] if len(parts) > 1 else "",
-                "serial": parts[2] if len(parts) > 2 else "",
-                "not_before": parts[3] if len(parts) > 3 else "",
-                "not_after": parts[4] if len(parts) > 4 else "",
-                "revoked": revoked,
-            })
-        else:
-            # Unrecognised format — return raw
-            items.append({
-                "key_name": line,
-                "subject": "",
-                "serial": "",
+                "key_name": key_name,
+                "subject": subject,
+                "serial": serial,
                 "not_before": "",
-                "not_after": "",
-                "revoked": False,
+                "not_after": validity,
+                "revoked": revoked,
             })
     return items
 
@@ -137,23 +124,15 @@ def _parse_certs_list(text: str) -> list:
 def _parse_users_list(text: str) -> list:
     """
     Parse server response for 'users list'.
-    Expected format varies; tries common patterns.
+    Table format: ID | Username | Role | Actif | 2FA | Derniere connexion
     """
     items = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.endswith(":"):
-            continue
-        if line.startswith("- "):
-            line = line[2:].strip()
-        # Try: username (role) [disabled] [totp]
-        m = re.match(r"(\S+)\s+\(([^)]+)\)(.*)", line)
-        if m:
-            username = m.group(1)
-            role = m.group(2)
-            rest = m.group(3).lower()
-            enabled = "disabled" not in rest
-            totp_enabled = "totp" in rest
+    for parts in _table_rows(text):
+        username = parts[1] if len(parts) > 1 else ""
+        role = parts[2] if len(parts) > 2 else ""
+        enabled = parts[3].lower() == "oui" if len(parts) > 3 else True
+        totp_enabled = parts[4].lower() == "oui" if len(parts) > 4 else False
+        if username:
             items.append({
                 "id": username,
                 "username": username,
@@ -161,47 +140,22 @@ def _parse_users_list(text: str) -> list:
                 "enabled": enabled,
                 "totp_enabled": totp_enabled,
             })
-        elif line:
-            items.append({
-                "id": line,
-                "username": line,
-                "role": "",
-                "enabled": True,
-                "totp_enabled": False,
-            })
     return items
 
 
 def _parse_logs_list(text: str) -> list:
     """
-    Parse server response for 'logs list'.
-    Returns list of dicts with timestamp, username, action, details.
+    Parse server response for 'logs'.
+    Table format: Timestamp | User | IP | Action | Details
     """
     items = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.endswith(":"):
-            continue
-        if line.startswith("- "):
-            line = line[2:].strip()
-        # Try: [timestamp] username action details
-        m = re.match(r"\[([^\]]+)\]\s+(\S+)\s+(\S+)\s*(.*)", line)
-        if m:
-            items.append({
-                "timestamp": m.group(1),
-                "username": m.group(2),
-                "action": m.group(3),
-                "details": m.group(4),
-            })
-        else:
-            # Split by common separators
-            parts = re.split(r"\s+\|\s+|\s{2,}", line, maxsplit=3)
-            items.append({
-                "timestamp": parts[0] if len(parts) > 0 else "",
-                "username": parts[1] if len(parts) > 1 else "",
-                "action": parts[2] if len(parts) > 2 else line,
-                "details": parts[3] if len(parts) > 3 else "",
-            })
+    for parts in _table_rows(text):
+        items.append({
+            "timestamp": parts[0] if len(parts) > 0 else "",
+            "username": parts[1] if len(parts) > 1 else "",
+            "action": parts[3] if len(parts) > 3 else "",
+            "details": parts[4] if len(parts) > 4 else "",
+        })
     return items
 
 
@@ -445,7 +399,9 @@ class APIHandler(BaseHTTPRequestHandler):
             if not name:
                 self._send_error(400, "name required")
                 return
-            cmd = f"pki add {name} {subject}" if subject else f"pki add {name}"
+            algo = body.get("algorithm", "RSA").strip() or "RSA"
+            key_size = str(body.get("key_size", "2048")).strip() or "2048"
+            cmd = f"pki add {name} {subject} {algo} {key_size}" if subject else f"pki add {name} {name} {algo} {key_size}"
             resp = self._proxy_command(session, cmd)
             if resp is None or _is_error(resp):
                 self._send_error(400, resp or "Command failed")

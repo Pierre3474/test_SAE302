@@ -19,7 +19,8 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from core.auth import hash_password, verify_password, check_permission, check_pki_access
+from core.auth import (hash_password, verify_password, check_permission,
+                       check_pki_access, validate_password_strength)
 
 
 class TestHashPassword(unittest.TestCase):
@@ -260,6 +261,67 @@ class TestCheckPkiAccess(unittest.TestCase):
         """Un utilisateur sans PKI assignee ne doit avoir acces a rien."""
         self.bdd.get_user_pkis.return_value = []
         self.assertFalse(check_pki_access(self.bdd, user_id=5, pki_id=1, role="editor"))
+
+
+class TestValidatePasswordStrength(unittest.TestCase):
+    """Tests pour validate_password_strength() — complexite mot de passe."""
+
+    VALID = "Str0ng!Password#2024"
+
+    def test_mot_de_passe_valide(self):
+        """Un mot de passe valide ne doit retourner aucune erreur."""
+        self.assertEqual(validate_password_strength(self.VALID), [])
+
+    def test_trop_court(self):
+        """Un mot de passe < 12 caracteres doit etre refuse."""
+        erreurs = validate_password_strength("Short!1A")
+        self.assertTrue(any("12" in e for e in erreurs))
+
+    def test_sans_majuscule(self):
+        """Un mot de passe sans majuscule doit etre refuse."""
+        erreurs = validate_password_strength("str0ng!password#2024")
+        self.assertTrue(any("majuscule" in e for e in erreurs))
+
+    def test_sans_minuscule(self):
+        """Un mot de passe sans minuscule doit etre refuse."""
+        erreurs = validate_password_strength("STR0NG!PASSWORD#2024")
+        self.assertTrue(any("minuscule" in e for e in erreurs))
+
+    def test_sans_chiffre(self):
+        """Un mot de passe sans chiffre doit etre refuse."""
+        erreurs = validate_password_strength("Strong!Password#Abc")
+        self.assertTrue(any("chiffre" in e for e in erreurs))
+
+    def test_sans_special(self):
+        """Un mot de passe sans caractere special doit etre refuse."""
+        erreurs = validate_password_strength("Str0ngPassword2024")
+        self.assertTrue(any("special" in e for e in erreurs))
+
+    def test_contient_username(self):
+        """Un mot de passe contenant le nom d'utilisateur doit etre refuse."""
+        erreurs = validate_password_strength("AliceStr0ng!2024", username="alice")
+        self.assertTrue(any("utilisateur" in e for e in erreurs))
+
+    def test_username_case_insensitive(self):
+        """La verification du nom d'utilisateur est insensible a la casse."""
+        erreurs = validate_password_strength("ALICE_Str0ng!2024", username="alice")
+        self.assertTrue(any("utilisateur" in e for e in erreurs))
+
+    def test_identique_ancien_mdp(self):
+        """Un mot de passe identique a l'ancien doit etre refuse."""
+        old_hash = hash_password(self.VALID)
+        erreurs = validate_password_strength(self.VALID, old_hash=old_hash)
+        self.assertTrue(any("identique" in e for e in erreurs))
+
+    def test_sans_ancien_mdp_ok(self):
+        """Sans old_hash, la verification de reutilisation ne s'applique pas."""
+        erreurs = validate_password_strength(self.VALID, old_hash=None)
+        self.assertEqual(erreurs, [])
+
+    def test_multiple_erreurs(self):
+        """Un mot de passe faible peut avoir plusieurs erreurs."""
+        erreurs = validate_password_strength("weak")
+        self.assertGreater(len(erreurs), 1)
 
 
 if __name__ == "__main__":

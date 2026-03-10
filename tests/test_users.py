@@ -19,7 +19,7 @@ Lancement :
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -200,14 +200,14 @@ class TestCreationUtilisateur(unittest.TestCase):
 
     def test_creation_utilisateur(self):
         """'users create' doit creer un utilisateur avec succes."""
-        resultat = handle_command(self.session, "users create bob secret editor", self.bdd)
+        resultat = handle_command(self.session, "users create bob S3cr3t!Pass#42 editor", self.bdd)
         self.assertIn("bob", resultat)
         self.assertIn("cree", resultat.lower())
         self.bdd.create_user.assert_called_once()
 
     def test_creation_role_par_defaut(self):
         """Sans role specifie, le role par defaut doit etre 'viewer'."""
-        resultat = handle_command(self.session, "users create alice pass123", self.bdd)
+        resultat = handle_command(self.session, "users create alice P@ssw0rd!2024", self.bdd)
         self.assertIn("cree", resultat.lower())
         args_appel = self.bdd.create_user.call_args
         self.assertEqual(args_appel[0][2], "viewer")
@@ -397,7 +397,7 @@ class TestMiseAJourUtilisateur(unittest.TestCase):
 
     def test_changer_mot_de_passe(self):
         """'users update bob password newpass' doit changer le mot de passe."""
-        resultat = handle_command(self.session, "users update bob password newpass", self.bdd)
+        resultat = handle_command(self.session, "users update bob password N3wP@ssword!99", self.bdd)
         self.assertIn("mis a jour", resultat.lower())
         self.bdd.update_user.assert_called_once()
 
@@ -713,6 +713,66 @@ class TestLogs(unittest.TestCase):
         session_editor = SessionFactice(role="editor")
         resultat = handle_command(session_editor, "logs", self.bdd)
         self.assertIn("ERREUR", resultat)
+
+
+class TestPasswd(unittest.TestCase):
+    """Tests pour la commande passwd — changement de mot de passe en libre-service."""
+
+    ANCIEN = "OldP@ssword!99"
+    NOUVEAU = "N3wSecur3!Pass#2024"
+
+    def setUp(self):
+        self.bdd = MagicMock()
+        self.session = SessionFactice(role="viewer", user_id=5)
+        ancien_hash = hash_password(self.ANCIEN)
+        self.bdd.get_user.return_value = {
+            "id": 5,
+            "username": "alice",
+            "password_hash": ancien_hash,
+            "role": "viewer",
+            "totp_enabled": False,
+        }
+
+    def test_changement_valide(self):
+        """passwd avec ancien MDP correct et nouveau MDP fort doit reussir."""
+        resultat = handle_command(
+            self.session, f"passwd {self.ANCIEN} {self.NOUVEAU}", self.bdd
+        )
+        self.assertIn("succes", resultat.lower())
+        self.bdd.update_user.assert_called_once()
+
+    def test_ancien_mdp_incorrect(self):
+        """passwd avec mauvais ancien MDP doit etre refuse."""
+        resultat = handle_command(
+            self.session, f"passwd mauvais_mdp {self.NOUVEAU}", self.bdd
+        )
+        self.assertIn("ERREUR", resultat)
+        self.assertIn("incorrect", resultat.lower())
+
+    def test_nouveau_mdp_trop_faible(self):
+        """passwd avec nouveau MDP trop faible doit etre refuse."""
+        resultat = handle_command(
+            self.session, f"passwd {self.ANCIEN} faible", self.bdd
+        )
+        self.assertIn("ERREUR", resultat)
+        self.assertIn("faible", resultat.lower())
+
+    def test_nouveau_mdp_identique_ancien(self):
+        """passwd avec meme ancien et nouveau MDP doit etre refuse."""
+        resultat = handle_command(
+            self.session, f"passwd {self.ANCIEN} {self.ANCIEN}", self.bdd
+        )
+        self.assertIn("ERREUR", resultat)
+
+    def test_arguments_manquants(self):
+        """passwd sans arguments doit retourner un usage."""
+        resultat = handle_command(self.session, "passwd", self.bdd)
+        self.assertIn("Usage", resultat)
+
+    def test_un_seul_argument(self):
+        """passwd avec un seul argument doit retourner un usage."""
+        resultat = handle_command(self.session, f"passwd {self.ANCIEN}", self.bdd)
+        self.assertIn("Usage", resultat)
 
 
 if __name__ == "__main__":

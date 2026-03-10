@@ -11,9 +11,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
+from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+from cryptography.hazmat.primitives.asymmetric.ec import ECDSA, EllipticCurvePublicKey
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography import x509
 from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+from cryptography.exceptions import InvalidSignature
 
 log = logging.getLogger(__name__)
 
@@ -243,7 +246,7 @@ def revoke_certificate(db, pki_id: int, key_name: str) -> str:
     if not cert:
         return f"[ERREUR] Aucun certificat actif pour '{key_name}'."
     if cert["revoked"]:
-        return f"[ERREUR] Ce certificat est deja revoque."
+        return "[ERREUR] Ce certificat est deja revoque."
 
     db.revoke_certificate(cert["id"])
     return f"Certificat '{key_name}' revoque (serial: {cert['serial_number'][:16]}...)."
@@ -529,3 +532,67 @@ def _format_extensions(cert) -> list[str]:
             if val.key_identifier:
                 lines.append(f"Authority Key Identifier: {val.key_identifier.hex()[:16]}...")
     return lines
+
+
+def verify_certificate_chain(cert_pem: str, ca_cert_pem: str) -> tuple[bool, str]:
+    """
+    Verifie qu'un certificat a bien ete emis par une CA donnee.
+
+    Controles effectues :
+      1. L'emetteur du certificat correspond au sujet de la CA
+      2. Le certificat est dans sa periode de validite
+      3. La signature est valide (RSA-PKCS1v15 ou ECDSA selon le type de cle)
+
+    Returns:
+        Tuple (valide: bool, message: str)
+    """
+    try:
+        cert = x509.load_pem_x509_certificate(cert_pem.encode("utf-8"))
+        ca_cert = x509.load_pem_x509_certificate(ca_cert_pem.encode("utf-8"))
+
+        # 1. Verifier que l'emetteur correspond au sujet de la CA
+        if cert.issuer != ca_cert.subject:
+            return False, "Emetteur du certificat != sujet de la CA"
+
+        # 2. Verifier la periode de validite
+        now = datetime.now(timezone.utc)
+        if now < cert.not_valid_before_utc or now > cert.not_valid_after_utc:
+            return False, "Certificat hors de sa periode de validite"
+
+        # 3. Verifier la signature cryptographique
+        ca_pub = ca_cert.public_key()
+        algo = cert.signature_hash_algorithm
+
+        if isinstance(ca_pub, EllipticCurvePublicKey):
+            ca_pub.verify(cert.signature, cert.tbs_certificate_bytes, ECDSA(algo))
+        else:
+            # RSA (PKCS#1 v1.5)
+            ca_pub.verify(cert.signature, cert.tbs_certificate_bytes,
+                          asym_padding.PKCS1v15(), algo)
+
+        return True, "Chaine de certification valide"
+
+    except InvalidSignature:
+        return False, "Signature invalide — certificat non emis par cette CA"
+    except Exception as e:
+        return False, f"Erreur de validation : {e}"
+
+
+def verify_cert_against_ca(db, pki_id: int, key_name: str, ca_key_name: str) -> str:
+    """
+    Verifie la chaine de certification : cert de key_name signe par cert de ca_key_name.
+
+    Returns:
+        Message de resultat (OK ou ECHEC avec detail).
+    """
+    cert_data = db.get_certificate(pki_id, key_name)
+    if not cert_data:
+        return f"[ERREUR] Aucun certificat actif pour '{key_name}'."
+
+    ca_cert_data = db.get_certificate(pki_id, ca_key_name)
+    if not ca_cert_data:
+        return f"[ERREUR] Aucun certificat CA pour '{ca_key_name}'."
+
+    valid, msg = verify_certificate_chain(cert_data["cert_pem"], ca_cert_data["cert_pem"])
+    icon = "[OK]" if valid else "[ECHEC]"
+    return f"Verification chaine '{key_name}' -> '{ca_key_name}' : {icon} — {msg}"

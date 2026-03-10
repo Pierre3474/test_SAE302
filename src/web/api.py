@@ -18,6 +18,7 @@ Routes:
     POST   /api/pki/<name>/sign
     POST   /api/pki/<name>/revoke
     GET    /api/pki/<name>/cert/<key>/pem
+    GET    /api/pki/<name>/verify/<key>/<ca_key>
     GET    /api/users
     POST   /api/users
     DELETE /api/users/<username>
@@ -346,6 +347,18 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._send_error(404, resp or "Not found")
             else:
                 self._send_json(200, {"pem": resp})
+            return
+
+        # GET /api/pki/<name>/verify/<key>/<ca_key>
+        m = re.match(r"^/api/pki/([^/]+)/verify/([^/]+)/([^/]+)$", p)
+        if m:
+            name, key, ca_key = m.group(1), m.group(2), m.group(3)
+            resp = self._proxy_command(session, f"pki ctx {name} verify crt {key} {ca_key}")
+            if resp is None:
+                self._send_error(500, "Proxy error")
+            else:
+                valid = "[OK]" in resp
+                self._send_json(200, {"valid": valid, "message": resp})
             return
 
         # GET /api/users  (admin only)

@@ -6,9 +6,10 @@ et dispatche les commandes vers le module commands.
 """
 
 import os
+import ssl
 import sys
 import socket
-import struct
+import secrets
 import logging
 import threading
 
@@ -32,6 +33,9 @@ class ClientSession:
         self.role: str | None = None
         self.ip: str = addr[0]
         self.authenticated = False
+        self.challenge: str = secrets.token_hex(16)
+        self.totp_pending: bool = False
+        self._pending_user: dict | None = None
 
     def __repr__(self) -> str:
         user = self.username or "anonyme"
@@ -94,7 +98,8 @@ class PKIServer:
     """Serveur TCP multi-thread pour la gestion de PKI."""
 
     def __init__(self, host: str, port: int, xor_key: int,
-                 db, command_handler):
+                 db, command_handler, ipv6: bool = False,
+                 tls_context=None):
         """
         Args:
             host            : adresse d'ecoute.
@@ -102,19 +107,27 @@ class PKIServer:
             xor_key         : cle XOR partagee avec les clients.
             db              : instance Database.
             command_handler : fonction(session, command) -> reponse.
+            ipv6            : True pour ecouter en IPv6.
+            tls_context     : ssl.SSLContext ou None.
         """
         self.host = host
         self.port = port
         self.xor_key = xor_key
+        self.ipv6 = ipv6
         self.cipher = XorCipher(xor_key)
         self.db = db
         self.command_handler = command_handler
         self._server_socket: socket.socket | None = None
         self._running = False
+        self.tls_context = tls_context  # ssl.SSLContext ou None
 
     def start(self) -> None:
         """Demarre le serveur et accepte les connexions."""
-        self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        af = socket.AF_INET6 if self.ipv6 else socket.AF_INET
+        self._server_socket = socket.socket(af, socket.SOCK_STREAM)
+        if self.ipv6:
+            # Accepter connexions IPv6 uniquement (pas dual-stack)
+            self._server_socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
         self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server_socket.bind((self.host, self.port))
         self._server_socket.listen(5)
@@ -152,12 +165,28 @@ class PKIServer:
 
     def _handle_client(self, conn: socket.socket, addr: tuple) -> None:
         """Gere une connexion client dans un thread dedie."""
+        # Wrapping TLS si active
+        if self.tls_context:
+            import ssl
+            try:
+                conn = self.tls_context.wrap_socket(conn, server_side=True)
+            except ssl.SSLError as e:
+                log.warning("Echec handshake TLS depuis %s : %s", addr[0], e)
+                conn.close()
+                return
         cipher = XorCipher(self.xor_key)
         session = ClientSession(conn, addr, cipher)
 
         try:
-            # Envoi du message hello
-            send_framed(conn, cipher, "SAE302 PKI Server ready")
+            # Envoi du message hello avec challenge
+            banner = (
+                "╔══════════════════════════════════════════╗\r\n"
+                "║     SAE302 PKI Manager  v1.0             ║\r\n"
+                "║  Tapez 'help' pour la liste des commandes║\r\n"
+                "╚══════════════════════════════════════════╝\r\n"
+                f"CHALL:{session.challenge}"
+            )
+            send_framed(conn, cipher, banner)
 
             while self._running:
                 message = recv_framed(conn, cipher)

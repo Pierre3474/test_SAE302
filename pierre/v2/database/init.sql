@@ -16,11 +16,16 @@ CREATE TABLE users (
     id              SERIAL PRIMARY KEY,
     username        VARCHAR(50) UNIQUE NOT NULL,
     password_hash   TEXT NOT NULL,
+    password_sha256 TEXT,
     role            VARCHAR(20) DEFAULT 'viewer'
                     CHECK (role IN ('admin', 'editor', 'viewer')),
     enabled         BOOLEAN DEFAULT TRUE,
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    last_login      TIMESTAMP WITH TIME ZONE
+    last_login      TIMESTAMP WITH TIME ZONE,
+    totp_secret      TEXT,
+    totp_enabled     BOOLEAN DEFAULT FALSE,
+    failed_attempts  INTEGER DEFAULT 0,
+    locked_until     TIMESTAMP WITH TIME ZONE
 );
 
 CREATE INDEX idx_users_username ON users(username);

@@ -33,8 +33,11 @@ Routes:
     POST   /api/profile/totp/enable
     POST   /api/profile/totp/disable
     POST   /api/users/<username>/unlock
+    POST   /api/pki/<name>/renew/<key>
 """
 
+import csv
+import io
 import json
 import os
 import re
@@ -386,6 +389,33 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"pem": pem, "message": resp})
             return
 
+        # GET /api/logs/export — exporte les journaux au format CSV
+        if p == "/api/logs/export":
+            if session.role != "admin":
+                self._send_error(403, "Forbidden")
+                return
+            resp = self._proxy_command(session, "logs list")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+                return
+            logs = _parse_logs_list(resp)
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(["Horodatage", "Utilisateur", "Action", "Details"])
+            for entry in logs:
+                writer.writerow([entry["timestamp"], entry["username"],
+                                 entry["action"], entry["details"]])
+            csv_bytes = buf.getvalue().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             'attachment; filename="logs_pki.csv"')
+            self.send_header("Content-Length", str(len(csv_bytes)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(csv_bytes)
+            return
+
         # GET /api/pki/<name>/cert/<key>/info — affiche les informations d'un certificat
         m = re.match(r"^/api/pki/([^/]+)/cert/([^/]+)/info$", p)
         if m:
@@ -591,7 +621,11 @@ class APIHandler(BaseHTTPRequestHandler):
             secret_match = re.search(r"Secret \(base32\)\s*:\s*(\S+)", resp)
             uri = uri_match.group(1) if uri_match else ""
             secret = secret_match.group(1) if secret_match else ""
-            self._send_json(200, {"ok": True, "uri": uri, "secret": secret})
+            # Extraction des codes de récupération depuis la réponse (RECOVERY_CODES: ...)
+            rc_match = re.search(r"RECOVERY_CODES:\s*(.+)", resp)
+            recovery_codes = [c.strip() for c in rc_match.group(1).split(",")] if rc_match else []
+            self._send_json(200, {"ok": True, "uri": uri, "secret": secret,
+                                  "recovery_codes": recovery_codes})
             return
 
         # POST /api/users/<username>/totp/enable  (admin uniquement)
@@ -673,7 +707,10 @@ class APIHandler(BaseHTTPRequestHandler):
             secret_match = re.search(r"Secret \(base32\)\s*:\s*(\S+)", resp)
             uri = uri_match.group(1) if uri_match else ""
             secret = secret_match.group(1) if secret_match else ""
-            self._send_json(200, {"ok": True, "uri": uri, "secret": secret})
+            rc_match = re.search(r"RECOVERY_CODES:\s*(.+)", resp)
+            recovery_codes = [c.strip() for c in rc_match.group(1).split(",")] if rc_match else []
+            self._send_json(200, {"ok": True, "uri": uri, "secret": secret,
+                                  "recovery_codes": recovery_codes})
             return
 
         # POST /api/profile/totp/enable — active le TOTP pour l'utilisateur courant
@@ -706,6 +743,20 @@ class APIHandler(BaseHTTPRequestHandler):
                 return
             uname = m.group(1)
             resp = self._proxy_command(session, f"users unlock {uname}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"ok": True, "message": resp})
+            return
+
+        # POST /api/pki/<name>/renew/<key> — renouvelle (re-signe) un certificat
+        m = re.match(r"^/api/pki/([^/]+)/renew/([^/]+)$", p)
+        if m:
+            name, key = m.group(1), m.group(2)
+            body = self._read_body()
+            ca_key = body.get("ca_key", "").strip() or key
+            days = str(body.get("days", "365")).strip()
+            resp = self._proxy_command(session, f"pki ctx {name} sign crt {key} {ca_key} {days}")
             if resp is None or _is_error(resp):
                 self._send_error(400, resp or "Command failed")
             else:

@@ -1,5 +1,99 @@
 /* SAE302 PKI Web Interface — custom styles (complement Bootstrap 5) */
 
+/* ---------------------------------------------------------------------------
+ * Mode sombre
+ * ---------------------------------------------------------------------------*/
+body.dark {
+  background-color: #1a1d23;
+  color: #e0e0e0;
+}
+body.dark .card {
+  background-color: #252830;
+  border-color: #3a3d47;
+  color: #e0e0e0;
+}
+body.dark .card-header {
+  background-color: #2e3140;
+  border-color: #3a3d47;
+}
+body.dark .sidebar {
+  background-color: #1e2130;
+  border-color: #3a3d47;
+}
+body.dark .sidebar .nav-link {
+  color: #b0b8cc;
+}
+body.dark .sidebar .nav-link:hover {
+  background-color: #2e3140;
+  color: #e0e0e0;
+}
+body.dark .sidebar .nav-link.active {
+  background-color: #0d6efd;
+  color: #fff;
+}
+body.dark .table {
+  --bs-table-bg: #252830;
+  --bs-table-striped-bg: #2a2d38;
+  --bs-table-hover-bg: #2e3140;
+  color: #e0e0e0;
+  border-color: #3a3d47;
+}
+body.dark .table-dark {
+  --bs-table-bg: #1a1d23;
+}
+body.dark .modal-content {
+  background-color: #252830;
+  border-color: #3a3d47;
+  color: #e0e0e0;
+}
+body.dark .modal-header,
+body.dark .modal-footer {
+  border-color: #3a3d47;
+}
+body.dark .form-control,
+body.dark .form-select {
+  background-color: #1e2130;
+  border-color: #3a3d47;
+  color: #e0e0e0;
+}
+body.dark .form-control::placeholder {
+  color: #7a7f8e;
+}
+body.dark .form-control:focus,
+body.dark .form-select:focus {
+  background-color: #252830;
+  color: #e0e0e0;
+  border-color: #4d8de8;
+  box-shadow: 0 0 0 0.2rem rgba(13,110,253,.25);
+}
+body.dark .bg-light {
+  background-color: #2a2d38 !important;
+  color: #e0e0e0 !important;
+}
+body.dark .text-muted {
+  color: #8a8fa0 !important;
+}
+body.dark #page-login {
+  background: #1a1d23;
+}
+body.dark pre {
+  background-color: #1e2130 !important;
+  color: #c8d0e0;
+}
+body.dark .alert-danger {
+  background-color: #3d1a1a;
+  border-color: #7a2020;
+  color: #ff9999;
+}
+body.dark .alert-warning {
+  background-color: #3d2f00;
+  border-color: #7a5a00;
+  color: #ffd080;
+}
+body.dark hr {
+  border-color: #3a3d47;
+}
+
 /* Sidebar */
 .sidebar {
   min-height: calc(100vh - 56px);

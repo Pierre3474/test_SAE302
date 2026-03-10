@@ -20,8 +20,11 @@ let _allPKIs  = [];
 let _logsPage = 0;
 const LOGS_PER_PAGE = 20;
 
-let _totpUsername = null;
-let _totpSelf     = false;
+let _totpUsername      = null;
+let _totpSelf          = false;
+let _recoveryCodes     = [];
+let _renewPkiName      = null;
+let _renewKeyName      = null;
 let _sessionTimer = null;
 let _navigating   = false;
 let _chartCerts   = null;  // instance Chart.js
@@ -71,6 +74,38 @@ function escHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ---------------------------------------------------------------------------
+// Mode sombre
+// ---------------------------------------------------------------------------
+function toggleDarkMode() {
+  const isDark = document.body.classList.toggle('dark');
+  localStorage.setItem('pki_dark', isDark ? '1' : '0');
+  const btn = document.getElementById('btn-dark-mode');
+  if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+}
+
+function applyDarkModePreference() {
+  if (localStorage.getItem('pki_dark') === '1') {
+    document.body.classList.add('dark');
+    const btn = document.getElementById('btn-dark-mode');
+    if (btn) btn.textContent = '☀️';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Export CSV journaux
+// ---------------------------------------------------------------------------
+async function downloadLogsCSV() {
+  // Utilise fetch direct (pas api()) pour déclencher le téléchargement du fichier
+  const resp = await fetch('/api/logs/export', {
+    headers: STATE.token ? { 'Authorization': `Bearer ${STATE.token}` } : {},
+  });
+  if (!resp.ok) { showToast('Erreur export CSV.', 'error'); return; }
+  const blob = await resp.blob();
+  triggerDownload(URL.createObjectURL(blob), 'logs_pki.csv', 'text/csv');
+  showToast('Journaux exportés en CSV.');
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +435,9 @@ async function togglePKIDetails(name) {
                 <button class="btn btn-xs btn-outline-dark"
                         onclick="downloadCRL('${escHtml(name)}','${escHtml(c.key_name)}')">CRL</button>
                 ${!c.revoked ? `<button class="btn btn-xs btn-outline-warning"
-                        onclick="openRevoke('${escHtml(name)}','${escHtml(c.key_name)}')">Révoquer</button>` : ''}
+                        onclick="openRevoke('${escHtml(name)}','${escHtml(c.key_name)}')">Révoquer</button>
+                <button class="btn btn-xs btn-outline-success"
+                        onclick="openRenew('${escHtml(name)}','${escHtml(c.key_name)}')">Renouveler</button>` : ''}
                 <button class="btn btn-xs btn-outline-primary"
                         onclick="verifyCert('${escHtml(name)}','${escHtml(c.key_name)}')">Vérifier</button>
               </div>
@@ -593,6 +630,17 @@ function openSign(pkiName) {
   new bootstrap.Modal(document.getElementById('modal-sign')).show();
 }
 
+function openRenew(pkiName, keyName) {
+  _renewPkiName = pkiName;
+  _renewKeyName = keyName;
+  document.getElementById('renew-pki-name').value = pkiName;
+  document.getElementById('renew-key-name').value = keyName;
+  document.getElementById('renew-ca-key').value   = '';
+  document.getElementById('renew-days').value     = '365';
+  document.getElementById('renew-error').classList.add('d-none');
+  new bootstrap.Modal(document.getElementById('modal-renew')).show();
+}
+
 // ---------------------------------------------------------------------------
 // Utilisateurs
 // ---------------------------------------------------------------------------
@@ -730,6 +778,18 @@ async function totpSetup(username, isSelf = false) {
   document.getElementById('totp-qr').innerHTML = '';
   document.getElementById('totp-verify-code').value = '';
   document.getElementById('totp-verify-error').classList.add('d-none');
+
+  // Afficher les codes de récupération s'ils existent
+  _recoveryCodes = res.data.recovery_codes || [];
+  const rcSection = document.getElementById('totp-recovery-section');
+  const rcEl = document.getElementById('totp-recovery-codes');
+  if (_recoveryCodes.length && rcSection && rcEl) {
+    rcEl.innerHTML = _recoveryCodes.map(c => `<div>${escHtml(c)}</div>`).join('');
+    rcSection.style.display = '';
+  } else if (rcSection) {
+    rcSection.style.display = 'none';
+  }
+
   new bootstrap.Modal(document.getElementById('modal-totp')).show();
 
   if (res.data.uri) {
@@ -740,6 +800,12 @@ async function totpSetup(username, isSelf = false) {
         `<code class="small text-break">${escHtml(res.data.uri)}</code>`;
     }
   }
+}
+
+function copyRecoveryCodes() {
+  if (!_recoveryCodes.length) return;
+  navigator.clipboard.writeText(_recoveryCodes.join('\n'))
+    .then(() => showToast('Codes de récupération copiés.'));
 }
 
 async function totpEnable(username, isSelf = false) {
@@ -981,6 +1047,25 @@ document.addEventListener('DOMContentLoaded', () => {
       Object.values(l).some(v => String(v).toLowerCase().includes(q))) : _allLogs);
   }
 
-  // Initialisation
+  // Renouveler certificat
+  document.getElementById('btn-renew-submit').addEventListener('click', async () => {
+    const pkiName = document.getElementById('renew-pki-name').value;
+    const keyName = document.getElementById('renew-key-name').value;
+    const caKey   = document.getElementById('renew-ca-key').value.trim();
+    const days    = parseInt(document.getElementById('renew-days').value, 10) || 365;
+    const errEl   = document.getElementById('renew-error');
+    const res = await api('POST',
+      `/pki/${encodeURIComponent(pkiName)}/renew/${encodeURIComponent(keyName)}`,
+      { ca_key: caKey, days });
+    if (res.ok) {
+      bootstrap.Modal.getInstance(document.getElementById('modal-renew')).hide();
+      showToast(`Certificat "${keyName}" renouvelé.`);
+      const el = document.getElementById('pki-details-' + pkiName);
+      if (el && !el.classList.contains('d-none')) { el.classList.add('d-none'); togglePKIDetails(pkiName); }
+    } else { errEl.textContent = res.data.error || 'Échec.'; errEl.classList.remove('d-none'); }
+  });
+
+  // Initialisation — appliquer le mode sombre au démarrage
+  applyDarkModePreference();
   if (STATE.token) showApp(); else showLoginPage();
 });

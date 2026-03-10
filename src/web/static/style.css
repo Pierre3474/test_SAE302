@@ -73,3 +73,54 @@
     padding-right: 1rem;
   }
 }
+
+/* Visualisation de la chaîne de confiance PKI */
+.chain-tree {
+  padding: 0.5rem 0;
+}
+
+.chain-node {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.chain-connector {
+  color: #6c757d;
+  font-size: 0.85rem;
+  padding-left: 1rem;
+  line-height: 1.8;
+  white-space: pre;
+}
+
+.chain-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+/* Statut du certificat dans la chaîne */
+.chain-valid {
+  background: #d1e7dd;
+  border-color: #0f5132;
+  color: #0f5132;
+}
+
+.chain-expiring {
+  background: #fff3cd;
+  border-color: #856404;
+  color: #856404;
+}
+
+.chain-revoked {
+  background: #f8d7da;
+  border-color: #842029;
+  color: #842029;
+  text-decoration: line-through;
+}

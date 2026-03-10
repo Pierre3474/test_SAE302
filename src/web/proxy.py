@@ -58,6 +58,8 @@ class PKIProxy:
         self.username: str | None = None
         self.role: str | None = None
         self._challenge: str | None = None
+        # Mis a True si le serveur a repondu OTP_REQUIRED lors du dernier connect()
+        self.otp_required: bool = False
 
     # ------------------------------------------------------------------
     # Low-level framing (mirrors PKIClient._send_framed / _recv_framed)
@@ -140,14 +142,17 @@ class PKIProxy:
         if response is None:
             return False
 
-        # Handle TOTP challenge
+        # Gestion du challenge TOTP
         if response == "OTP_REQUIRED":
+            self.otp_required = True
             if not otp_code:
-                # Cannot complete MFA without an OTP code
+                # Code OTP manquant — signale au niveau superieur
                 return False
             response = self.send_command(f"otp {otp_code}")
             if response is None:
                 return False
+        else:
+            self.otp_required = False
 
         if response.startswith("OK"):
             parts = response.split()

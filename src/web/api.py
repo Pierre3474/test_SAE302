@@ -226,28 +226,29 @@ class APIHandler(BaseHTTPRequestHandler):
         return auth[7:].strip()
 
     def _proxy_command(self, session, cmd: str) -> str | None:
-        """Create a PKIProxy, authenticate (reusing session creds is not possible after
-        initial login — we keep a proxy per-request; in a real scenario you'd pool them).
-        Since we cannot re-authenticate without the password, we rely on the PKI server
-        allowing admin operations based on the session role stored server-side.
+        """Envoie une commande au serveur PKI via la connexion TCP persistante de la session.
 
-        NOTE: The TCP server is stateful per-connection. Each API call opens a fresh
-        connection. The session token maps to (username, role) stored in our session store,
-        but we need to re-authenticate on every request. We store the hashed credentials
-        in the session for this purpose.
+        La connexion est maintenue ouverte tout au long de la session web pour eviter
+        la re-authentification TOTP a chaque requete (les codes OTP sont a usage unique).
+        En cas de deconnexion TCP, on tente une reconnexion sans OTP (fonctionne si TOTP
+        est desactive). Si TOTP est active et la connexion est perdue, l'utilisateur devra
+        se reconnecter depuis l'interface web.
         """
-        # Credentials are stored on the session object as _proxy_credentials
-        creds = getattr(session, "_proxy_credentials", None)
-        if creds is None:
+        proxy = getattr(session, "_proxy", None)
+        if proxy is None:
             return None
-        proxy = PKIProxy()
-        ok = proxy.connect(creds["username"], creds["password"], creds.get("otp", ""))
-        if not ok:
-            return None
-        try:
-            return proxy.send_command(cmd)
-        finally:
-            proxy.disconnect()
+
+        # Verrou par session pour eviter les acces concurrents au socket TCP
+        with session.lock:
+            result = proxy.send_command(cmd)
+            if result is None:
+                # Connexion perdue — tentative de reconnexion sans code TOTP
+                creds = getattr(session, "_proxy_credentials", None)
+                if creds:
+                    ok = proxy.connect(creds["username"], creds["password"])
+                    if ok:
+                        result = proxy.send_command(cmd)
+            return result
 
     # ------------------------------------------------------------------
     # Routing
@@ -423,22 +424,26 @@ class APIHandler(BaseHTTPRequestHandler):
             proxy = PKIProxy()
             ok = proxy.connect(username, password, otp_code)
             if not ok:
-                # Check if OTP is needed: connect returned False without OTP
-                # We cannot distinguish easily, so return a specific hint
+                # Indique au frontend s'il faut afficher le champ OTP
+                otp_needed = proxy.otp_required
                 proxy.disconnect()
-                self._send_error(401, "Authentication failed")
+                if otp_needed:
+                    self._send_error(401, "OTP_REQUIRED")
+                else:
+                    self._send_error(401, "Authentication failed")
                 return
 
             role = proxy.role or "viewer"
-            proxy.disconnect()
 
             token = self.session_store.create(username, role)
             session = self.session_store.get(token)
-            # Store plain-text credentials on session for per-request re-auth
+            # Garde le proxy connecte pour reutilisation (evite la ré-auth TOTP a chaque requete)
+            session._proxy = proxy
+            # Conserve username/password pour reconnexion automatique en cas de perte TCP
+            # (le code OTP n'est pas stocke car il est a usage unique)
             session._proxy_credentials = {
                 "username": username,
                 "password": password,
-                "otp": otp_code,
             }
             self._send_json(200, {"token": token, "role": role, "username": username})
             return
@@ -452,6 +457,15 @@ class APIHandler(BaseHTTPRequestHandler):
         # POST /api/logout
         if p == "/api/logout":
             token = self._get_token()
+            # Ferme la connexion TCP persistante avant de supprimer la session
+            logout_session = self.session_store.get(token)
+            if logout_session:
+                proxy = getattr(logout_session, "_proxy", None)
+                if proxy:
+                    try:
+                        proxy.disconnect()
+                    except Exception:
+                        pass
             self.session_store.delete(token)
             self._send_json(200, {})
             return

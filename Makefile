@@ -12,7 +12,7 @@ USER     := admin
 
 .PHONY: help install db db-stop db-reset server server-tls server-web \
         client client-tls client-ipv6 web tls-cert test test-v \
-        coverage lint lint-fix logs clean fclean stop start
+        coverage lint lint-fix logs clean fclean stop start demo start-demo
 
 # ── Aide ─────────────────────────────────────────────────────
 help:
@@ -40,6 +40,8 @@ help:
 	@echo "  make test-v        Lancer les tests (rapport detaille)"
 	@echo "  make coverage      Rapport de couverture HTML (htmlcov/)"
 	@echo ""
+	@echo "  make demo          Initialiser l'etat de demonstration"
+	@echo "  make start-demo    Tout lancer + initialiser la demo (1 commande)"
 	@echo "  make start         Demarrer PKI + web en arriere-plan"
 	@echo "  make stop          Arreter le serveur PKI et le serveur web"
 	@echo ""
@@ -142,6 +144,20 @@ start:
 	@echo "  Interface web : http://$(HOST):8080"
 	@echo ""
 	@echo "  Pour arreter : make stop"
+
+# ── Démo ─────────────────────────────────────────────────────
+demo:
+	$(PYTHON) scripts/setup_demo.py
+
+start-demo: db
+	@echo "Demarrage du serveur PKI + interface web..."
+	@$(PYTHON) $(SRC)/server.py --web &
+	@echo "Attente du serveur..."
+	@sleep 3
+	@$(PYTHON) scripts/setup_demo.py
+	@echo ""
+	@echo "  Interface web : http://127.0.0.1:8080  (admin / admin)"
+	@echo "  Pour arreter  : make stop"
 
 # ── Arrêt des serveurs ────────────────────────────────────────
 stop:

@@ -179,7 +179,14 @@ class PKIServer:
 
         try:
             # Envoi du message hello avec challenge
-            send_framed(conn, cipher, f"SAE302 PKI Server ready CHALL:{session.challenge}")
+            banner = (
+                "╔══════════════════════════════════════════╗\r\n"
+                "║     SAE302 PKI Manager  v1.0             ║\r\n"
+                "║  Tapez 'help' pour la liste des commandes║\r\n"
+                "╚══════════════════════════════════════════╝\r\n"
+                f"CHALL:{session.challenge}"
+            )
+            send_framed(conn, cipher, banner)
 
             while self._running:
                 message = recv_framed(conn, cipher)

@@ -434,6 +434,7 @@ function showLoginPage() {
 function showApp() {
   document.getElementById('page-login').style.display = 'none';
   document.getElementById('page-app').style.display   = '';
+  document.getElementById('app-footer')?.classList.replace('d-none', 'd-flex');
   document.getElementById('nav-username').textContent = STATE.username || '';
   document.getElementById('nav-role').textContent     = STATE.role     || '';
   document.querySelectorAll('.admin-only').forEach(el =>

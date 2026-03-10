@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -13,48 +13,53 @@
 </head>
 <body>
 
-<!-- ===== LOGIN PAGE ===== -->
+<!-- ===== PAGE CONNEXION ===== -->
 <div id="page-login">
-  <div class="card shadow-sm" style="width: 360px;">
+  <div class="card shadow-sm" style="width:360px;">
     <div class="card-body p-4">
       <h4 class="card-title text-center mb-4">
         <span class="text-primary fw-bold">SAE302</span> PKI Manager
       </h4>
       <form id="login-form" novalidate>
         <div class="mb-3">
-          <label for="login-username" class="form-label">Username</label>
+          <label for="login-username" class="form-label">Nom d'utilisateur</label>
           <input type="text" class="form-control" id="login-username" autocomplete="username" required />
         </div>
         <div class="mb-3">
-          <label for="login-password" class="form-label">Password</label>
+          <label for="login-password" class="form-label">Mot de passe</label>
           <input type="password" class="form-control" id="login-password" autocomplete="current-password" required />
         </div>
         <div class="mb-3" id="otp-field" style="display:none;">
-          <label for="login-otp" class="form-label">OTP Code (TOTP)</label>
+          <label for="login-otp" class="form-label">Code OTP (TOTP)</label>
           <input type="text" class="form-control" id="login-otp" autocomplete="one-time-code"
-                 inputmode="numeric" maxlength="6" placeholder="6-digit code" />
+                 inputmode="numeric" maxlength="6" placeholder="6 chiffres" />
         </div>
         <div id="login-error" class="alert alert-danger py-2 d-none"></div>
         <button type="submit" class="btn btn-primary w-100" id="login-btn">
           <span id="login-spinner" class="spinner-border spinner-border-sm me-2 d-none"></span>
-          Sign In
+          Connexion
         </button>
       </form>
     </div>
   </div>
 </div>
 
-<!-- ===== MAIN APP ===== -->
+<!-- ===== APPLICATION PRINCIPALE ===== -->
 <div id="page-app" style="display:none;">
 
-  <!-- Navbar -->
+  <!-- Barre de navigation -->
   <nav class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
     <div class="container-fluid">
       <span class="navbar-brand fw-bold">SAE302 PKI</span>
       <div class="d-flex align-items-center gap-3 ms-auto">
+        <!-- Alerte expiration certificat -->
+        <span id="nav-expiry-alert" class="badge bg-danger d-none" title="Certificats expirant bientôt">
+          ⚠ Certs. critiques
+        </span>
         <span class="text-white small" id="nav-username"></span>
         <span class="badge bg-light text-primary" id="nav-role"></span>
-        <button class="btn btn-outline-light btn-sm" id="logout-btn">Logout</button>
+        <span class="badge bg-warning text-dark" id="nav-session-timer" title="Temps restant"></span>
+        <button class="btn btn-outline-light btn-sm" id="logout-btn">Déconnexion</button>
       </div>
     </div>
   </nav>
@@ -62,33 +67,28 @@
   <div class="container-fluid">
     <div class="row">
 
-      <!-- Sidebar -->
+      <!-- Barre latérale -->
       <nav class="col-md-2 sidebar pt-3">
         <ul class="nav flex-column">
           <li class="nav-item">
-            <a class="nav-link" href="#dashboard" data-section="dashboard">
-              Dashboard
-            </a>
+            <a class="nav-link" href="#dashboard" data-section="dashboard">Dashboard</a>
           </li>
           <li class="nav-item">
-            <a class="nav-link" href="#pki" data-section="pki">
-              PKI Management
-            </a>
+            <a class="nav-link" href="#pki" data-section="pki">Gestion PKI</a>
           </li>
           <li class="nav-item admin-only d-none">
-            <a class="nav-link" href="#users" data-section="users">
-              Users
-            </a>
+            <a class="nav-link" href="#users" data-section="users">Utilisateurs</a>
           </li>
           <li class="nav-item admin-only d-none">
-            <a class="nav-link" href="#logs" data-section="logs">
-              Audit Logs
-            </a>
+            <a class="nav-link" href="#logs" data-section="logs">Journaux</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#profile" data-section="profile">Mon profil</a>
           </li>
         </ul>
       </nav>
 
-      <!-- Main content -->
+      <!-- Contenu principal -->
       <main class="col-md-10 ms-sm-auto pt-4 px-4">
 
         <!-- DASHBOARD -->
@@ -99,7 +99,7 @@
               <div class="card text-white bg-primary">
                 <div class="card-body">
                   <div class="fs-2 fw-bold" id="dash-pki-count">—</div>
-                  <div class="small">PKI Authorities</div>
+                  <div class="small">Autorités PKI</div>
                 </div>
               </div>
             </div>
@@ -107,60 +107,154 @@
               <div class="card text-white bg-success">
                 <div class="card-body">
                   <div class="fs-2 fw-bold" id="dash-user-count">—</div>
-                  <div class="small">Users</div>
+                  <div class="small">Utilisateurs</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+              <div class="card text-white bg-warning">
+                <div class="card-body">
+                  <div class="fs-2 fw-bold" id="dash-expiring-count">—</div>
+                  <div class="small">Certs. expirant bientôt</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+              <div class="card text-white bg-danger">
+                <div class="card-body">
+                  <div class="fs-2 fw-bold" id="dash-revoked-count">—</div>
+                  <div class="small">Certificats révoqués</div>
                 </div>
               </div>
             </div>
           </div>
-          <h5>Recent Activity</h5>
-          <div id="dash-recent" class="text-muted small">Loading…</div>
+
+          <!-- Statistiques + activité -->
+          <div class="row g-4">
+            <div class="col-md-5 admin-only d-none">
+              <h5>Répartition des certificats</h5>
+              <div style="max-width:280px;">
+                <canvas id="chart-certs"></canvas>
+              </div>
+            </div>
+            <div class="col-md-7">
+              <h5>Activité récente</h5>
+              <div id="dash-recent" class="text-muted small">Chargement…</div>
+            </div>
+          </div>
         </section>
 
-        <!-- PKI MANAGEMENT -->
+        <!-- GESTION PKI -->
         <section id="section-pki" class="section d-none">
           <div class="d-flex align-items-center justify-content-between mb-3">
-            <h2>PKI Management</h2>
-            <button class="btn btn-primary btn-sm" id="btn-add-pki">+ Add PKI</button>
+            <h2>Gestion PKI</h2>
+            <div class="d-flex gap-2">
+              <input type="text" class="form-control form-control-sm" id="pki-search"
+                     placeholder="Rechercher…" style="width:200px;" />
+              <button class="btn btn-primary btn-sm" id="btn-add-pki">+ Ajouter</button>
+            </div>
           </div>
           <div id="pki-list" class="row g-3">
-            <div class="text-muted">Loading…</div>
+            <div class="text-muted">Chargement…</div>
           </div>
         </section>
 
-        <!-- USERS -->
+        <!-- UTILISATEURS -->
         <section id="section-users" class="section d-none">
           <div class="d-flex align-items-center justify-content-between mb-3">
-            <h2>Users</h2>
-            <button class="btn btn-primary btn-sm" id="btn-add-user">+ Add User</button>
+            <h2>Utilisateurs</h2>
+            <div class="d-flex gap-2">
+              <input type="text" class="form-control form-control-sm" id="users-search"
+                     placeholder="Rechercher…" style="width:200px;" />
+              <button class="btn btn-primary btn-sm" id="btn-add-user">+ Ajouter</button>
+            </div>
           </div>
           <div class="table-responsive">
             <table class="table table-striped table-hover align-middle">
               <thead class="table-dark">
                 <tr>
-                  <th>Username</th><th>Role</th><th>Enabled</th><th>TOTP</th><th>Actions</th>
+                  <th>Nom</th><th>Rôle</th><th>Statut</th><th>2FA</th>
+                  <th>Dernière connexion</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody id="users-tbody">
-                <tr><td colspan="5" class="text-muted">Loading…</td></tr>
+                <tr><td colspan="6" class="text-muted">Chargement…</td></tr>
               </tbody>
             </table>
           </div>
         </section>
 
-        <!-- LOGS -->
+        <!-- JOURNAUX D'AUDIT -->
         <section id="section-logs" class="section d-none">
-          <h2 class="mb-3">Audit Logs</h2>
+          <div class="d-flex align-items-center justify-content-between mb-3">
+            <h2>Journaux d'audit</h2>
+            <input type="text" class="form-control form-control-sm" id="logs-search"
+                   placeholder="Filtrer…" style="width:220px;" />
+          </div>
           <div class="table-responsive logs-table">
             <table class="table table-sm table-striped">
               <thead class="table-dark">
                 <tr>
-                  <th>Timestamp</th><th>User</th><th>Action</th><th>Details</th>
+                  <th>Horodatage</th><th>Utilisateur</th><th>Action</th><th>Détails</th>
                 </tr>
               </thead>
               <tbody id="logs-tbody">
-                <tr><td colspan="4" class="text-muted">Loading…</td></tr>
+                <tr><td colspan="4" class="text-muted">Chargement…</td></tr>
               </tbody>
             </table>
+          </div>
+          <div class="d-flex align-items-center justify-content-between mt-2">
+            <span class="text-muted small" id="logs-info"></span>
+            <div class="btn-group btn-group-sm">
+              <button class="btn btn-outline-secondary" id="logs-prev">‹ Précédent</button>
+              <button class="btn btn-outline-secondary" id="logs-next">Suivant ›</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- MON PROFIL -->
+        <section id="section-profile" class="section d-none">
+          <h2 class="mb-4">Mon profil</h2>
+          <div class="row g-4">
+            <div class="col-md-5">
+              <div class="card">
+                <div class="card-header fw-bold">Informations du compte</div>
+                <div class="card-body">
+                  <dl class="row mb-0">
+                    <dt class="col-5">Nom</dt>
+                    <dd class="col-7" id="profile-username">—</dd>
+                    <dt class="col-5">Rôle</dt>
+                    <dd class="col-7"><span id="profile-role" class="badge bg-secondary">—</span></dd>
+                    <dt class="col-5">2FA (TOTP)</dt>
+                    <dd class="col-7" id="profile-totp-status">—</dd>
+                  </dl>
+                  <hr />
+                  <div id="profile-totp-actions"></div>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-5">
+              <div class="card">
+                <div class="card-header fw-bold">Changer le mot de passe</div>
+                <div class="card-body">
+                  <div class="mb-3">
+                    <label class="form-label">Ancien mot de passe</label>
+                    <input type="password" class="form-control" id="passwd-old" />
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Nouveau mot de passe</label>
+                    <input type="password" class="form-control" id="passwd-new" />
+                    <div id="passwd-strength" class="mt-1"></div>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Confirmer</label>
+                    <input type="password" class="form-control" id="passwd-confirm" />
+                  </div>
+                  <div id="passwd-error" class="alert alert-danger d-none py-2"></div>
+                  <button class="btn btn-primary w-100" id="btn-passwd-submit">Mettre à jour</button>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -171,63 +265,63 @@
 
 <!-- ===== MODALS ===== -->
 
-<!-- Add PKI -->
+<!-- Ajouter une PKI -->
 <div class="modal fade" id="modal-add-pki" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Add PKI</h5>
+        <h5 class="modal-title">Ajouter une PKI</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <div class="mb-3">
-          <label class="form-label">PKI Name</label>
-          <input type="text" class="form-control" id="add-pki-name" placeholder="e.g. myca" />
+          <label class="form-label">Nom de la PKI</label>
+          <input type="text" class="form-control" id="add-pki-name" placeholder="ex : myca" />
         </div>
         <div class="mb-3">
-          <label class="form-label">Subject (CN=...)</label>
-          <input type="text" class="form-control" id="add-pki-subject" placeholder="e.g. CN=MyCA" />
+          <label class="form-label">Sujet (CN=...)</label>
+          <input type="text" class="form-control" id="add-pki-subject" placeholder="ex : CN=MyCA" />
         </div>
         <div id="add-pki-error" class="alert alert-danger d-none"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" id="btn-add-pki-submit">Create</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+        <button class="btn btn-primary" id="btn-add-pki-submit">Créer</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Keygen -->
+<!-- Génération de clé -->
 <div class="modal fade" id="modal-keygen" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Generate Key</h5>
+        <h5 class="modal-title">Générer une clé</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="keygen-pki-name" />
         <div class="mb-3">
-          <label class="form-label">Key Name</label>
-          <input type="text" class="form-control" id="keygen-key-name" placeholder="e.g. root" />
+          <label class="form-label">Nom de la clé</label>
+          <input type="text" class="form-control" id="keygen-key-name" placeholder="ex : root" />
         </div>
         <div class="mb-3">
-          <label class="form-label">Algorithm</label>
+          <label class="form-label">Algorithme</label>
           <select class="form-select" id="keygen-algorithm">
             <option value="RSA">RSA</option>
             <option value="EC">EC</option>
           </select>
         </div>
         <div class="mb-3">
-          <label class="form-label">Key Size / Curve</label>
+          <label class="form-label">Taille / Courbe</label>
           <input type="text" class="form-control" id="keygen-key-size" value="2048" />
         </div>
         <div id="keygen-error" class="alert alert-danger d-none"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" id="btn-keygen-submit">Generate</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+        <button class="btn btn-primary" id="btn-keygen-submit">Générer</button>
       </div>
     </div>
   </div>
@@ -238,99 +332,121 @@
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Generate CSR</h5>
+        <h5 class="modal-title">Générer une CSR</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="csr-pki-name" />
         <div class="mb-3">
-          <label class="form-label">Key Name</label>
+          <label class="form-label">Nom de la clé</label>
           <input type="text" class="form-control" id="csr-key-name" />
         </div>
         <div class="mb-3">
-          <label class="form-label">Subject</label>
+          <label class="form-label">Sujet</label>
           <input type="text" class="form-control" id="csr-subject" placeholder="CN=server1" />
         </div>
         <div id="csr-error" class="alert alert-danger d-none"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" id="btn-csr-submit">Generate</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+        <button class="btn btn-primary" id="btn-csr-submit">Générer</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Sign -->
+<!-- Signer un certificat -->
 <div class="modal fade" id="modal-sign" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Sign Certificate</h5>
+        <h5 class="modal-title">Signer un certificat</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="sign-pki-name" />
         <div class="mb-3">
-          <label class="form-label">Key to sign</label>
+          <label class="form-label">Clé à signer</label>
           <input type="text" class="form-control" id="sign-key-name" />
         </div>
         <div class="mb-3">
-          <label class="form-label">CA Key</label>
-          <input type="text" class="form-control" id="sign-ca-key" placeholder="CA key name (leave blank for self-signed)" />
+          <label class="form-label">Clé CA</label>
+          <input type="text" class="form-control" id="sign-ca-key" placeholder="Laisser vide pour auto-signé" />
         </div>
         <div class="mb-3">
-          <label class="form-label">Validity (days)</label>
+          <label class="form-label">Validité (jours)</label>
           <input type="number" class="form-control" id="sign-days" value="365" />
         </div>
         <div id="sign-error" class="alert alert-danger d-none"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" id="btn-sign-submit">Sign</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+        <button class="btn btn-primary" id="btn-sign-submit">Signer</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- PEM Export -->
+<!-- Export PEM -->
 <div class="modal fade" id="modal-pem" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Certificate PEM</h5>
+        <h5 class="modal-title">Certificat PEM</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <textarea class="form-control font-monospace" id="pem-content" rows="14" readonly></textarea>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-        <button class="btn btn-primary" id="btn-pem-copy">Copy</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+        <button class="btn btn-success" id="btn-pem-download">Télécharger</button>
+        <button class="btn btn-primary" id="btn-pem-copy">Copier</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Add User -->
+<!-- Détails certificat -->
+<div class="modal fade" id="modal-cert-info" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Détails du certificat</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <pre id="cert-info-content" class="bg-light p-3 rounded font-monospace small"
+             style="white-space:pre-wrap;"></pre>
+      </div>
+      <div class="modal-footer">
+        <div id="cert-bundle-actions" class="me-auto d-flex gap-2"></div>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Ajouter un utilisateur -->
 <div class="modal fade" id="modal-add-user" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Add User</h5>
+        <h5 class="modal-title">Ajouter un utilisateur</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <div class="mb-3">
-          <label class="form-label">Username</label>
+          <label class="form-label">Nom d'utilisateur</label>
           <input type="text" class="form-control" id="add-user-name" />
         </div>
         <div class="mb-3">
-          <label class="form-label">Password</label>
+          <label class="form-label">Mot de passe</label>
           <input type="password" class="form-control" id="add-user-password" />
+          <div id="add-user-strength" class="mt-1"></div>
         </div>
         <div class="mb-3">
-          <label class="form-label">Role</label>
+          <label class="form-label">Rôle</label>
           <select class="form-select" id="add-user-role">
             <option value="viewer">Viewer</option>
             <option value="editor">Editor</option>
@@ -340,14 +456,14 @@
         <div id="add-user-error" class="alert alert-danger d-none"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" id="btn-add-user-submit">Create</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+        <button class="btn btn-primary" id="btn-add-user-submit">Créer</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Modal TOTP Setup -->
+<!-- Modal TOTP -->
 <div class="modal fade" id="modal-totp" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -358,25 +474,26 @@
       <div class="modal-body text-center">
         <p class="mb-1">Scannez ce QR code avec <strong>Google Authenticator</strong> ou <strong>FreeOTP</strong> :</p>
         <div id="totp-qr" class="my-3 d-flex justify-content-center"></div>
-        <div class="mb-2">
-          <label class="form-label small text-muted">Secret (saisie manuelle)</label>
-          <input type="text" class="form-control font-monospace text-center" id="totp-secret" readonly />
-        </div>
         <hr />
-        <p class="small text-muted mb-2">Après avoir scanné, activez le 2FA :</p>
+        <p class="small text-muted mb-2">Entrez le code affiché dans votre application pour confirmer :</p>
+        <input type="text" class="form-control text-center font-monospace mb-3"
+               id="totp-verify-code" inputmode="numeric" maxlength="6"
+               placeholder="123456" style="max-width:160px; margin:0 auto;" />
+        <div id="totp-verify-error" class="alert alert-danger d-none py-2 mb-2"></div>
         <button class="btn btn-success" id="btn-totp-enable">Activer le 2FA</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Toast container -->
+<!-- Conteneur de toasts -->
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

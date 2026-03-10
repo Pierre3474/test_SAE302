@@ -332,7 +332,9 @@ def _handle_users(session, args: list, db) -> str:
 
     # Sous-commandes a traitement special (permission explicite)
     if sub == "totp":
-        if not check_permission(session.role, "users_update"):
+        # Un utilisateur peut gérer son propre TOTP sans être admin
+        totp_target = args[2] if len(args) > 2 else ""
+        if totp_target != session.username and not check_permission(session.role, "users_update"):
             return "[ERREUR] Permission refusee (admin uniquement)."
         return _handle_users_totp(session, args[1:], db)
 
@@ -559,9 +561,15 @@ def _handle_users_totp(session, args: list, db) -> str:
         )
 
     elif sub == "enable":
+        # args : [sub, username, code_otp_optionnel]
+        otp_code = args[2] if len(args) > 2 else None
         user_full = db.get_user(username) or {}
         if not user_full.get("totp_secret"):
             return f"[ERREUR] Aucun secret TOTP pour '{username}'. Faites d'abord : users totp setup {username}"
+        # Vérifie le code OTP si fourni (obligatoire via l'interface web)
+        if otp_code is not None:
+            if not verify_totp(user_full["totp_secret"], otp_code):
+                return "[ERREUR] Code OTP invalide. Vérifiez votre application d'authentification."
         db.set_totp(user["id"], user_full["totp_secret"], enabled=True)
         audit("TOTP_ENABLE", f"2FA active pour {username}",
               user_id=session.user_id, ip=session.ip, db=db)

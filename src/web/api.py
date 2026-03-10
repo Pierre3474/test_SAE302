@@ -18,17 +18,28 @@ Routes:
     POST   /api/pki/<name>/sign
     POST   /api/pki/<name>/revoke
     GET    /api/pki/<name>/cert/<key>/pem
+    GET    /api/pki/<name>/cert/<key>/info
+    GET    /api/pki/<name>/key/<key>/pem
     GET    /api/pki/<name>/verify/<key>/<ca_key>
     GET    /api/users
     POST   /api/users
+    POST   /api/users/<username>/role
     DELETE /api/users/<username>
     GET    /api/logs
+    GET    /api/profile
+    GET    /api/pki/<name>/crl/<ca_key>
+    POST   /api/profile/password
+    POST   /api/profile/totp/setup
+    POST   /api/profile/totp/enable
+    POST   /api/profile/totp/disable
+    POST   /api/users/<username>/unlock
 """
 
 import json
 import os
 import re
 import sys
+import time
 from http.server import BaseHTTPRequestHandler
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -139,6 +150,7 @@ def _parse_users_list(text: str) -> list:
                 "role": role,
                 "enabled": enabled,
                 "totp_enabled": totp_enabled,
+                "last_login": parts[5].strip() if len(parts) > 5 else "",
             })
     return items
 
@@ -327,7 +339,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._send_json(200, _parse_users_list(resp))
             return
 
-        # GET /api/logs  (admin only)
+        # GET /api/logs  (admin uniquement)
         if p == "/api/logs":
             if session.role != "admin":
                 self._send_error(403, "Forbidden")
@@ -337,6 +349,59 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._send_json(200, [])
             else:
                 self._send_json(200, _parse_logs_list(resp))
+            return
+
+        # GET /api/profile — profil de l'utilisateur courant (aucun rôle requis)
+        if p == "/api/profile":
+            # Interroge le serveur PKI pour savoir si le TOTP est actif
+            resp = self._proxy_command(session, f"users totp status {session.username}")
+            # "ACTIVE" dans la réponse signifie que le TOTP est activé
+            totp_enabled = bool(resp and re.search(r"ACTIVE", resp))
+            # Calcule le temps restant avant expiration de la session (TTL = 3600 s)
+            session_remaining = int(WebSessionStore.TTL - (time.time() - session.last_activity))
+            self._send_json(200, {
+                "username": session.username,
+                "role": session.role,
+                "totp_enabled": totp_enabled,
+                "session_remaining": session_remaining,
+            })
+            return
+
+        # GET /api/pki/<name>/crl/<ca_key> — génère la CRL pour une CA donnée
+        m = re.match(r"^/api/pki/([^/]+)/crl/([^/]+)$", p)
+        if m:
+            name, ca_key = m.group(1), m.group(2)
+            resp = self._proxy_command(session, f"pki ctx {name} crlgen {ca_key} 30")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"pem": resp})
+            return
+
+        # GET /api/pki/<name>/cert/<key>/info — affiche les informations d'un certificat
+        m = re.match(r"^/api/pki/([^/]+)/cert/([^/]+)/info$", p)
+        if m:
+            name, key = m.group(1), m.group(2)
+            resp = self._proxy_command(session, f"pki ctx {name} show crt {key}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"info": resp})
+            return
+
+        # GET /api/pki/<name>/key/<key>/pem — retourne la clé privée en PEM (admin ou editor uniquement)
+        m = re.match(r"^/api/pki/([^/]+)/key/([^/]+)/pem$", p)
+        if m:
+            # Seuls les rôles admin et editor sont autorisés à accéder aux clés privées
+            if session.role not in ("admin", "editor"):
+                self._send_error(403, "Forbidden")
+                return
+            name, key = m.group(1), m.group(2)
+            resp = self._proxy_command(session, f"pki ctx {name} show privkey {key}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"pem": resp})
             return
 
         self._send_error(404, "Not found")
@@ -510,7 +575,10 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._send_error(403, "Forbidden")
                 return
             uname = m.group(1)
-            resp = self._proxy_command(session, f"users totp enable {uname}")
+            body = self._read_body()
+            otp_code = body.get("otp_code", "").strip()
+            cmd = f"users totp enable {uname} {otp_code}" if otp_code else f"users totp enable {uname}"
+            resp = self._proxy_command(session, cmd)
             if resp is None or _is_error(resp):
                 self._send_error(400, resp or "Command failed")
             else:
@@ -544,6 +612,95 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._send_error(400, "username and password required")
                 return
             resp = self._proxy_command(session, f"users create {username} {password} {role}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"ok": True, "message": resp})
+            return
+
+        # POST /api/profile/password — changement de mot de passe (aucun rôle requis)
+        if p == "/api/profile/password":
+            body = self._read_body()
+            old_password = body.get("old_password", "")
+            new_password = body.get("new_password", "")
+            # Vérifie que les deux champs sont bien fournis
+            if not old_password or not new_password:
+                self._send_error(400, "old_password and new_password required")
+                return
+            # La commande passwd s'authentifie elle-même avec l'ancien mot de passe
+            resp = self._proxy_command(session, f"passwd {old_password} {new_password}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"ok": True, "message": resp})
+            return
+
+        # POST /api/profile/totp/setup — initialise le TOTP pour l'utilisateur courant
+        if p == "/api/profile/totp/setup":
+            resp = self._proxy_command(session, f"users totp setup {session.username}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+                return
+            # Extrait l'URI otpauth:// depuis la réponse texte du serveur
+            uri_match = re.search(r"(otpauth://[^\s]+)", resp)
+            # Extrait le secret base32 depuis la réponse texte du serveur
+            secret_match = re.search(r"Secret \(base32\)\s*:\s*(\S+)", resp)
+            uri = uri_match.group(1) if uri_match else ""
+            secret = secret_match.group(1) if secret_match else ""
+            self._send_json(200, {"ok": True, "uri": uri, "secret": secret})
+            return
+
+        # POST /api/profile/totp/enable — active le TOTP pour l'utilisateur courant
+        if p == "/api/profile/totp/enable":
+            body = self._read_body()
+            otp_code = body.get("otp_code", "").strip()
+            cmd = f"users totp enable {session.username} {otp_code}" if otp_code else \
+                  f"users totp enable {session.username}"
+            resp = self._proxy_command(session, cmd)
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"ok": True, "message": resp})
+            return
+
+        # POST /api/profile/totp/disable — désactive le TOTP pour l'utilisateur courant
+        if p == "/api/profile/totp/disable":
+            resp = self._proxy_command(session, f"users totp disable {session.username}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"ok": True, "message": resp})
+            return
+
+        # POST /api/users/<username>/unlock — déverrouille un compte (admin uniquement)
+        m = re.match(r"^/api/users/([^/]+)/unlock$", p)
+        if m:
+            if session.role != "admin":
+                self._send_error(403, "Forbidden")
+                return
+            uname = m.group(1)
+            resp = self._proxy_command(session, f"users unlock {uname}")
+            if resp is None or _is_error(resp):
+                self._send_error(400, resp or "Command failed")
+            else:
+                self._send_json(200, {"ok": True, "message": resp})
+            return
+
+        # POST /api/users/<username>/role — modifie le rôle d'un utilisateur (admin uniquement)
+        m = re.match(r"^/api/users/([^/]+)/role$", p)
+        if m:
+            # Seul l'admin peut modifier les rôles
+            if session.role != "admin":
+                self._send_error(403, "Forbidden")
+                return
+            uname = m.group(1)
+            body = self._read_body()
+            role = body.get("role", "").strip()
+            # Valide que le rôle fourni est bien l'un des rôles autorisés
+            if role not in ("admin", "editor", "viewer"):
+                self._send_error(400, "role must be one of: admin, editor, viewer")
+                return
+            resp = self._proxy_command(session, f"users update {uname} role {role}")
             if resp is None or _is_error(resp):
                 self._send_error(400, resp or "Command failed")
             else:

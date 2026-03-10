@@ -8,7 +8,7 @@
 - Ajout des options `-4` / `-6` mutuellement exclusives dans le client
 - Support `AF_INET6` + `IPV6_V6ONLY=1` dans le serveur TCP
 - Variable d'environnement `SERVER_IPV6=1` pour activer IPv6 côté serveur
-- Tests de compatibilité IPv4 ↔ IPv6 documentés dans `captures/README.md`
+- Tests de compatibilité IPv4 ↔ IPv6 documentés dans `docs/captures/README.md`
 
 ### TOTP / 2FA (RFC 6238)
 - Bibliothèque `pyotp` — compatible FreeOTP et Google Authenticator
@@ -16,7 +16,7 @@
 - QR code ASCII généré directement dans le terminal (`qrcode`)
 - Flux `OTP_REQUIRED` : mot de passe OK → attente code → `otp <code>`
 - Colonnes `totp_secret` et `totp_enabled` dans la table `users`
-- Condition NTP documentée dans `tps/TP3_fonctionnalites.md`
+- Condition NTP documentée dans `docs/tps/TP3_fonctionnalites.md`
 
 ### Bonus TP3
 - **TLS** : `ssl.SSLContext`, `--tls`/`--no-verify`, `scripts/gen_tls_cert.py`

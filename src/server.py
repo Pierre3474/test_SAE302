@@ -51,6 +51,10 @@ def seed_admin(db: Database) -> None:
     db.create_user("admin", pw_hash, role="admin", password_sha256=pw_sha256)
     audit("SEED_ADMIN", "Compte admin cree au premier demarrage", db=db)
     log.info("Compte admin cree (mot de passe par defaut)")
+    if password == "admin":
+        Y, R = "\033[93m", "\033[0m"
+        print(f"\n  {Y}AVERTISSEMENT : mot de passe admin = 'admin' (par defaut).{R}")
+        print(f"  {Y}Changez-le avec : users update admin password <NouveauMdp>{R}\n")
 
 
 _BANNER = r"""

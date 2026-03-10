@@ -23,18 +23,30 @@ echo "   SAE302 — PKI Management System — Setup"
 echo "================================================"
 echo -e "${NC}"
 
-# --- Detection du gestionnaire de paquets systeme ---
+# --- Detection du systeme et du gestionnaire de paquets ---
+OS_TYPE="$(uname -s)"
 APT_AVAILABLE=false
-if command -v apt-get &> /dev/null; then
+BREW_AVAILABLE=false
+
+if [ "$OS_TYPE" = "Darwin" ]; then
+    # macOS
+    if command -v brew &> /dev/null; then
+        BREW_AVAILABLE=true
+    fi
+elif command -v apt-get &> /dev/null; then
     APT_AVAILABLE=true
 fi
 
 install_system_pkg() {
-    # Installe un ou plusieurs paquets systeme via apt
+    # Installe un ou plusieurs paquets systeme
     if [ "$APT_AVAILABLE" = true ]; then
-        echo -e "${CYAN}Installation systeme : $*${NC}"
+        echo -e "${CYAN}Installation systeme (apt) : $*${NC}"
         apt-get update -qq
         apt-get install -y -qq "$@"
+    elif [ "$BREW_AVAILABLE" = true ]; then
+        # Sur macOS, on utilise brew uniquement pour docker/python si absent
+        echo -e "${CYAN}Installation systeme (brew) : $*${NC}"
+        brew install "$@" 2>/dev/null || true
     else
         echo -e "${RED}Impossible d'installer automatiquement : $*${NC}"
         echo -e "${RED}Installez-les manuellement puis relancez le script.${NC}"
@@ -286,10 +298,17 @@ if [ "$ROLE" = "server" ] || [ "$ROLE" = "both" ]; then
 
     # Installation de Docker si absent
     if ! command -v docker &> /dev/null; then
-        echo -e "${YELLOW}Docker non detecte. Installation...${NC}"
-        install_system_pkg docker.io
-        systemctl enable --now docker
-        echo -e "${GREEN}Docker installe et demarre.${NC}"
+        echo -e "${YELLOW}Docker non detecte.${NC}"
+        if [ "$OS_TYPE" = "Darwin" ]; then
+            echo -e "${YELLOW}Sur macOS, installez Docker Desktop : https://docs.docker.com/desktop/mac/install/${NC}"
+            echo -e "${YELLOW}Puis relancez ce script.${NC}"
+            exit 1
+        else
+            echo -e "${CYAN}Installation de Docker...${NC}"
+            install_system_pkg docker.io
+            systemctl enable --now docker
+            echo -e "${GREEN}Docker installe et demarre.${NC}"
+        fi
     else
         echo -e "${GREEN}Docker detecte.${NC}"
     fi

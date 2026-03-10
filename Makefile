@@ -12,7 +12,7 @@ USER     := admin
 
 .PHONY: help install db db-stop db-reset server server-tls server-web \
         client client-tls client-ipv6 web tls-cert test test-v \
-        coverage lint lint-fix logs clean fclean stop start demo start-demo
+        coverage lint lint-fix logs clean fclean stop start demo start-demo check-env
 
 # ── Aide ─────────────────────────────────────────────────────
 help:
@@ -131,8 +131,19 @@ logs:
 		echo "Aucun log pour aujourd'hui ($$LOG_FILE)."; \
 	fi
 
+# ── Vérification .env ─────────────────────────────────────────
+check-env:
+	@if [ ! -f .env ]; then \
+		echo ""; \
+		echo "  AVERTISSEMENT : fichier .env manquant."; \
+		echo "  Copie automatique depuis .env.example..."; \
+		cp .env.example .env; \
+		echo "  .env cree. Verifiez les variables avant de continuer."; \
+		echo ""; \
+	fi
+
 # ── Démarrage combiné ─────────────────────────────────────────
-start:
+start: check-env
 	@echo "Demarrage du serveur PKI (port $(PORT))..."
 	@$(PYTHON) $(SRC)/server.py &
 	@sleep 1
@@ -149,7 +160,7 @@ start:
 demo:
 	$(PYTHON) scripts/setup_demo.py
 
-start-demo: db
+start-demo: check-env db
 	@echo "Demarrage du serveur PKI + interface web..."
 	@$(PYTHON) $(SRC)/server.py --web &
 	@echo "Attente du serveur..."

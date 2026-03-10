@@ -12,7 +12,7 @@ USER     := admin
 
 .PHONY: help install db db-stop db-reset server server-tls server-web \
         client client-tls client-ipv6 web tls-cert test test-v \
-        coverage lint lint-fix logs clean fclean
+        coverage lint lint-fix logs clean fclean stop start
 
 # ── Aide ─────────────────────────────────────────────────────
 help:
@@ -39,6 +39,9 @@ help:
 	@echo "  make test          Lancer les tests (rapport court)"
 	@echo "  make test-v        Lancer les tests (rapport detaille)"
 	@echo "  make coverage      Rapport de couverture HTML (htmlcov/)"
+	@echo ""
+	@echo "  make start         Demarrer PKI + web en arriere-plan"
+	@echo "  make stop          Arreter le serveur PKI et le serveur web"
 	@echo ""
 	@echo "  make logs          Afficher les logs du jour"
 	@echo "  make clean         Supprimer les fichiers temporaires"
@@ -125,6 +128,28 @@ logs:
 	else \
 		echo "Aucun log pour aujourd'hui ($$LOG_FILE)."; \
 	fi
+
+# ── Démarrage combiné ─────────────────────────────────────────
+start:
+	@echo "Demarrage du serveur PKI (port $(PORT))..."
+	@$(PYTHON) $(SRC)/server.py &
+	@sleep 1
+	@echo "Demarrage du serveur web (port 8080)..."
+	@$(PYTHON) $(SRC)/web/app.py &
+	@sleep 1
+	@echo ""
+	@echo "  Serveur PKI : tcp://$(HOST):$(PORT)"
+	@echo "  Interface web : http://$(HOST):8080"
+	@echo ""
+	@echo "  Pour arreter : make stop"
+
+# ── Arrêt des serveurs ────────────────────────────────────────
+stop:
+	@echo "Arret du serveur PKI (port 7890)..."
+	@lsof -ti tcp:7890 | xargs kill -9 2>/dev/null || true
+	@echo "Arret du serveur web (port 8080)..."
+	@lsof -ti tcp:8080 | xargs kill -9 2>/dev/null || true
+	@echo "Serveurs arretes."
 
 # ── Nettoyage ─────────────────────────────────────────────────
 clean:

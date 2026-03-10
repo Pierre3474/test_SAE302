@@ -29,6 +29,7 @@ let _logsRefreshTimer  = null;   // auto-refresh logs
 let _lastLogsCount     = 0;      // pour détecter les nouvelles entrées
 let _pendingLogsCount  = 0;      // badge sidebar non-lu
 let _cliPkiName        = null;   // PKI courante pour le modal CLI
+let _totpForced        = false;  // 2FA obligatoire non configuré
 let _sessionTimer = null;
 let _navigating   = false;
 let _chartCerts   = null;  // instance Chart.js
@@ -241,6 +242,80 @@ function copyCliCommands() {
 }
 
 // ---------------------------------------------------------------------------
+// Matrice RBAC (miroir de src/core/auth.py _PERMISSIONS)
+// ---------------------------------------------------------------------------
+const RBAC_MATRIX = [
+  { category: 'Gestion des utilisateurs', actions: [
+    { id: 'users_list',    label: 'Lister les utilisateurs',   admin: true,  editor: false, viewer: false },
+    { id: 'users_create',  label: 'Créer un utilisateur',      admin: true,  editor: false, viewer: false },
+    { id: 'users_delete',  label: 'Supprimer un utilisateur',  admin: true,  editor: false, viewer: false },
+    { id: 'users_update',  label: 'Modifier un utilisateur',   admin: true,  editor: false, viewer: false },
+    { id: 'users_enable',  label: 'Activer / désactiver',      admin: true,  editor: false, viewer: false },
+    { id: 'users_infos',   label: 'Voir les infos utilisateur',admin: true,  editor: false, viewer: false },
+  ]},
+  { category: 'Gestion des PKI', actions: [
+    { id: 'pki_list',   label: 'Lister les PKI',        admin: true, editor: true,  viewer: true  },
+    { id: 'pki_add',    label: 'Créer une PKI',          admin: true, editor: false, viewer: false },
+    { id: 'pki_delete', label: 'Supprimer une PKI',      admin: true, editor: false, viewer: false },
+    { id: 'pki_update', label: 'Modifier une PKI',       admin: true, editor: true,  viewer: false },
+    { id: 'pki_infos',  label: 'Voir les infos PKI',     admin: true, editor: true,  viewer: true  },
+    { id: 'pki_dump',   label: 'Exporter une PKI',       admin: true, editor: true,  viewer: true  },
+    { id: 'pki_rename', label: 'Renommer une PKI',       admin: true, editor: false, viewer: false },
+  ]},
+  { category: 'Clés cryptographiques', actions: [
+    { id: 'keygen',       label: 'Générer une clé',        admin: true, editor: true,  viewer: false },
+    { id: 'list_keys',    label: 'Lister les clés',        admin: true, editor: true,  viewer: true  },
+    { id: 'show_privkey', label: 'Voir la clé privée',     admin: true, editor: true,  viewer: false },
+    { id: 'show_pubkey',  label: 'Voir la clé publique',   admin: true, editor: true,  viewer: true  },
+    { id: 'keypem',       label: 'Exporter clé en PEM',    admin: true, editor: true,  viewer: true  },
+  ]},
+  { category: 'CSR (demandes de signature)', actions: [
+    { id: 'req_csr',  label: 'Créer une CSR',        admin: true, editor: true,  viewer: false },
+    { id: 'list_csr', label: 'Lister les CSR',       admin: true, editor: true,  viewer: true  },
+    { id: 'show_csr', label: 'Voir une CSR',         admin: true, editor: true,  viewer: true  },
+    { id: 'csrpem',   label: 'Exporter CSR en PEM',  admin: true, editor: true,  viewer: true  },
+  ]},
+  { category: 'Certificats X.509', actions: [
+    { id: 'sign_crt',     label: 'Signer un certificat',    admin: true, editor: true,  viewer: false },
+    { id: 'list_crt',     label: 'Lister les certificats',  admin: true, editor: true,  viewer: true  },
+    { id: 'show_crt',     label: 'Voir un certificat',      admin: true, editor: true,  viewer: true  },
+    { id: 'crtpem',       label: 'Exporter cert en PEM',    admin: true, editor: true,  viewer: true  },
+    { id: 'revoke',       label: 'Révoquer un certificat',  admin: true, editor: true,  viewer: false },
+    { id: 'crlgen',       label: 'Générer une CRL',         admin: true, editor: true,  viewer: false },
+    { id: 'verify_chain', label: 'Vérifier la chaîne',      admin: true, editor: true,  viewer: true  },
+  ]},
+];
+
+function showRbacMatrix() {
+  const Y = '<span class="rbac-yes">✓</span>';
+  const N = '<span class="rbac-no">✗</span>';
+  let html = `<table class="table table-bordered table-sm mb-0">
+    <thead class="table-dark">
+      <tr>
+        <th style="width:40%">Action</th>
+        <th class="text-center text-danger" style="width:20%">admin</th>
+        <th class="text-center text-warning" style="width:20%">editor</th>
+        <th class="text-center" style="width:20%">viewer</th>
+      </tr>
+    </thead><tbody>`;
+
+  for (const cat of RBAC_MATRIX) {
+    html += `<tr class="table-secondary"><td colspan="4"><strong>${escHtml(cat.category)}</strong></td></tr>`;
+    for (const a of cat.actions) {
+      html += `<tr>
+        <td class="text-muted small ps-3">${escHtml(a.label)} <code class="ms-1" style="font-size:0.7rem;">${escHtml(a.id)}</code></td>
+        <td class="text-center">${a.admin  ? Y : N}</td>
+        <td class="text-center">${a.editor ? Y : N}</td>
+        <td class="text-center">${a.viewer ? Y : N}</td>
+      </tr>`;
+    }
+  }
+  html += '</tbody></table>';
+  document.getElementById('rbac-table-container').innerHTML = html;
+  new bootstrap.Modal(document.getElementById('modal-rbac')).show();
+}
+
+// ---------------------------------------------------------------------------
 // Export CSV journaux
 // ---------------------------------------------------------------------------
 async function downloadLogsCSV() {
@@ -302,34 +377,48 @@ function updateTimerDisplay(seconds) {
 }
 
 // ---------------------------------------------------------------------------
-// Indicateur de force du mot de passe
+// Checklist force du mot de passe (règles ANSSI/NIST, miroir de auth.py)
 // ---------------------------------------------------------------------------
-function passwordStrength(password) {
-  let score = 0;
-  if (password.length >= 8)  score++;
-  if (password.length >= 12) score++;
-  if (/[A-Z]/.test(password)) score++;
-  if (/[a-z]/.test(password)) score++;
-  if (/[0-9]/.test(password)) score++;
-  if (/[^A-Za-z0-9]/.test(password)) score++;
-  return score;
-}
+const PW_RULES = [
+  { id: 'len',     label: '12 caractères minimum',        test: pw => pw.length >= 12 },
+  { id: 'upper',   label: 'Au moins 1 majuscule (A-Z)',   test: pw => /[A-Z]/.test(pw) },
+  { id: 'lower',   label: 'Au moins 1 minuscule (a-z)',   test: pw => /[a-z]/.test(pw) },
+  { id: 'digit',   label: 'Au moins 1 chiffre (0-9)',     test: pw => /[0-9]/.test(pw) },
+  { id: 'special', label: 'Au moins 1 caractère spécial (!@#$%...)',
+    test: pw => /[!@#$%^&*\-_=+<>?/\\|~`.,;:'"[\]{}()]/.test(pw) },
+];
 
-function renderStrength(inputEl, targetId) {
+function renderStrength(inputEl, targetId, usernameInputId = null) {
   inputEl.addEventListener('input', () => {
     const el = document.getElementById(targetId);
     if (!el) return;
-    const pw    = inputEl.value;
-    const score = passwordStrength(pw);
-    const labels = ['Très faible', 'Faible', 'Moyen', 'Bon', 'Fort', 'Très fort'];
-    const colors = ['danger','danger','warning','warning','success','success'];
-    const pct    = Math.round((score / 6) * 100);
-    el.innerHTML = pw.length === 0 ? '' : `
-      <div class="progress" style="height:4px;">
-        <div class="progress-bar bg-${colors[score-1] || 'danger'}"
-             style="width:${pct}%"></div>
+    const pw = inputEl.value;
+    const username = usernameInputId
+      ? (document.getElementById(usernameInputId)?.value || '')
+      : '';
+    if (!pw) { el.innerHTML = ''; return; }
+
+    const passed = PW_RULES.filter(r => r.test(pw)).length;
+    const pct    = Math.round((passed / PW_RULES.length) * 100);
+    const color  = passed <= 2 ? 'danger' : passed <= 4 ? 'warning' : 'success';
+
+    // Règle supplémentaire : pas de nom d'utilisateur dans le mot de passe
+    const noUser  = !username || !pw.toLowerCase().includes(username.toLowerCase());
+    const allPass = passed === PW_RULES.length && noUser;
+
+    el.innerHTML = `
+      <div class="progress mb-1" style="height:4px;">
+        <div class="progress-bar bg-${color}" style="width:${pct}%"></div>
       </div>
-      <small class="text-${colors[score-1] || 'danger'}">${labels[score-1] || 'Très faible'}</small>`;
+      <div class="mt-1">
+        ${PW_RULES.map(r => `
+          <div class="pw-rule ${r.test(pw) ? 'ok' : 'fail'}">
+            ${r.test(pw) ? '✓' : '✗'} ${escHtml(r.label)}
+          </div>`).join('')}
+        ${username ? `<div class="pw-rule ${noUser ? 'ok' : 'fail'}">
+          ${noUser ? '✓' : '✗'} Ne contient pas le nom d'utilisateur
+        </div>` : ''}
+      </div>`;
   });
 }
 
@@ -354,11 +443,29 @@ function showApp() {
     if (!res.ok) return;
     if (res.data.session_remaining) startSessionTimer(res.data.session_remaining);
     if (!res.data.totp_enabled) {
-      showToast('Sécurisez votre compte en configurant le 2FA dans "Mon profil".', 'warning');
+      setTotpForced(true);
       navigateTo('profile');
       return;
     }
+    setTotpForced(false);
     navigateTo(location.hash.replace('#','') || 'dashboard');
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 2FA obligatoire
+// ---------------------------------------------------------------------------
+function setTotpForced(forced) {
+  _totpForced = forced;
+  const banner = document.getElementById('totp-required-banner');
+  if (!banner) return;
+  banner.classList.toggle('d-none', !forced);
+  // Griser visuellement les liens nav (sauf profil)
+  document.querySelectorAll('.nav-link[data-section]').forEach(a => {
+    const locked = forced && a.dataset.section !== 'profile';
+    a.style.opacity  = locked ? '0.4' : '';
+    a.style.pointerEvents = locked ? 'none' : '';
+    a.title = locked ? 'Activez le 2FA d\'abord.' : '';
   });
 }
 
@@ -371,6 +478,11 @@ function navigateTo(section) {
   const valid = ['dashboard','pki','users','logs','profile'];
   if (!valid.includes(section)) section = 'dashboard';
   if ((section === 'users' || section === 'logs') && STATE.role !== 'admin') section = 'dashboard';
+  // Bloquer toute navigation hors profil si 2FA non configuré
+  if (_totpForced && section !== 'profile') {
+    showToast('Configurez le 2FA avant d\'accéder à cette section.', 'warning');
+    section = 'profile';
+  }
 
   history.replaceState(null, '', '#' + section);
   document.querySelectorAll('.section').forEach(el => el.classList.add('d-none'));
@@ -939,13 +1051,21 @@ async function totpSetup(username, isSelf = false) {
 
   // Afficher les codes de récupération s'ils existent
   _recoveryCodes = res.data.recovery_codes || [];
+  const dialog   = document.getElementById('modal-totp-dialog');
   const rcSection = document.getElementById('totp-recovery-section');
-  const rcEl = document.getElementById('totp-recovery-codes');
+  const qrCol    = document.getElementById('totp-qr-col');
+  const rcEl     = document.getElementById('totp-recovery-codes');
   if (_recoveryCodes.length && rcSection && rcEl) {
     rcEl.innerHTML = _recoveryCodes.map(c => `<div>${escHtml(c)}</div>`).join('');
-    rcSection.style.display = '';
+    rcSection.classList.remove('d-none');
+    // Passer en modal-lg et réduire la colonne QR à la moitié
+    dialog?.classList.add('modal-lg');
+    qrCol?.classList.replace('col', 'col-md-6');
   } else if (rcSection) {
-    rcSection.style.display = 'none';
+    rcSection.classList.add('d-none');
+    // Modal taille normale, colonne QR pleine largeur
+    dialog?.classList.remove('modal-lg');
+    qrCol?.classList.replace('col-md-6', 'col');
   }
 
   new bootstrap.Modal(document.getElementById('modal-totp')).show();
@@ -980,7 +1100,7 @@ async function totpEnable(username, isSelf = false) {
     showToast(`2FA activé${isSelf ? '' : ` pour "${username}"`}.`);
     document.getElementById('totp-verify-code').value = '';
     bootstrap.Modal.getInstance(document.getElementById('modal-totp'))?.hide();
-    if (isSelf) loadProfile(); else loadUsers();
+    if (isSelf) { setTotpForced(false); loadProfile(); } else loadUsers();
   } else {
     errEl.textContent = res.data.error || 'Code invalide.';
     errEl.classList.remove('d-none');
@@ -1165,9 +1285,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else { errEl.textContent = res.data.error || 'Échec.'; errEl.classList.remove('d-none'); }
   });
 
-  // Indicateurs force mot de passe
-  renderStrength(document.getElementById('passwd-new'),       'passwd-strength');
-  renderStrength(document.getElementById('add-user-password'), 'add-user-strength');
+  // Indicateurs force mot de passe (avec vérification du nom d'utilisateur)
+  renderStrength(document.getElementById('passwd-new'),        'passwd-strength',    null);
+  renderStrength(document.getElementById('add-user-password'), 'add-user-strength',  'add-user-name');
 
   // Changer mot de passe (profil)
   document.getElementById('btn-passwd-submit').addEventListener('click', async () => {
@@ -1183,7 +1303,12 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('Mot de passe mis à jour.');
       ['passwd-old','passwd-new','passwd-confirm'].forEach(id => { document.getElementById(id).value = ''; });
       document.getElementById('passwd-strength').innerHTML = '';
-    } else { errEl.textContent = res.data.error || 'Échec.'; errEl.classList.remove('d-none'); }
+    } else {
+      // Le serveur renvoie parfois un message multiligne avec les règles non respectées
+      const msg = res.data.error || 'Échec.';
+      errEl.innerHTML = escHtml(msg).replace(/\n/g, '<br>');
+      errEl.classList.remove('d-none');
+    }
   });
 
   // TOTP activer

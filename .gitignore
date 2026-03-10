@@ -16,7 +16,14 @@ certs/
 # Python
 __pycache__/
 *.pyc
+*.pyo
 venv/
+env/
+.venv/
+
+# Outils de développement
+.ruff_cache/
+.mypy_cache/
 
 # Tests / pytest
 .pytest_cache/

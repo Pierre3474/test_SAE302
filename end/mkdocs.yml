@@ -1,0 +1,85 @@
+site_name: SAE302 — PKI Management System
+site_description: Documentation complète du système de gestion de certificats PKI
+site_author: Pierre & Alexandre
+docs_dir: docs
+
+theme:
+  name: material
+  language: fr
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Mode sombre
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Mode clair
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search:
+      lang: fr
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_category_heading: true
+            members_order: source
+            heading_level: 2
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Accueil: index.md
+  - Architecture: architecture.md
+  - Référence API:
+    - api/index.md
+    - Chiffrement XOR: api/crypto.md
+    - Authentification: api/auth.md
+    - Commandes: api/commands.md
+    - Réseau: api/network.md
+    - PKI Manager: api/pki_manager.md
+    - Base de données: api/db.md
+    - Logs: api/logger.md
+    - Interface Web: api/web.md
+  - TPs:
+    - TP1 — Chiffrement: tps/TP1_chiffrement.md
+    - TP2 — Tests: tps/TP2_tests.md
+    - TP3 — Fonctionnalités: tps/TP3_fonctionnalites.md
+  - Changelog: changelog.md

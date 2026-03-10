@@ -34,6 +34,7 @@ Routes:
     POST   /api/profile/totp/disable
     POST   /api/users/<username>/unlock
     POST   /api/pki/<name>/renew/<key>
+    GET    /api/pki/<name>/bundle/<key>
 """
 
 import csv
@@ -440,6 +441,25 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._send_error(400, resp or "Command failed")
             else:
                 self._send_json(200, {"pem": resp})
+            return
+
+        # GET /api/pki/<name>/bundle/<key> — cert PEM + clé privée (admin/editor uniquement)
+        m = re.match(r"^/api/pki/([^/]+)/bundle/([^/]+)$", p)
+        if m:
+            if session.role not in ("admin", "editor"):
+                self._send_error(403, "Forbidden")
+                return
+            name, key = m.group(1), m.group(2)
+            cert_pem = self._proxy_command(session, f"pki ctx {name} crtpem {key}")
+            key_pem  = self._proxy_command(session, f"pki ctx {name} show privkey {key}")
+            if cert_pem is None or _is_error(cert_pem):
+                self._send_error(404, cert_pem or "Certificate not found")
+                return
+            self._send_json(200, {
+                "cert_pem": cert_pem,
+                "key_pem":  key_pem if (key_pem and not _is_error(key_pem)) else None,
+                "key_name": key,
+            })
             return
 
         self._send_error(404, "Not found")

@@ -42,6 +42,15 @@ class Database:
             self.minconn, self.maxconn, **dsn
         )
         log.info("Pool PostgreSQL ouvert (%d–%d connexions)", self.minconn, self.maxconn)
+        self._run_migrations()
+
+    def _run_migrations(self) -> None:
+        """Applique les migrations de schema manquantes (idempotent)."""
+        with self.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "recovery_codes TEXT DEFAULT NULL"
+            )
 
     def close(self) -> None:
         """Ferme le pool de connexions."""
@@ -72,23 +81,25 @@ class Database:
     # ------------------------------------------------------------------
 
     def get_user(self, username: str) -> dict | None:
-        """Recupere un utilisateur par son nom."""
+        """Recupere un utilisateur par son nom (inclut les colonnes TOTP et recovery)."""
         with self.cursor(commit=False) as cur:
             cur.execute(
-                "SELECT id, username, password_hash, role, enabled "
+                "SELECT id, username, password_hash, password_sha256, role, enabled, "
+                "totp_secret, totp_enabled, failed_attempts, locked_until, recovery_codes "
                 "FROM users WHERE username = %s",
                 (username,),
             )
             row = cur.fetchone()
             return dict(row) if row else None
 
-    def create_user(self, username: str, password_hash: str, role: str = "viewer") -> int:
+    def create_user(self, username: str, password_hash: str, role: str = "viewer",
+                    password_sha256: str | None = None) -> int:
         """Cree un utilisateur et renvoie son id."""
         with self.cursor() as cur:
             cur.execute(
-                "INSERT INTO users (username, password_hash, role) "
-                "VALUES (%s, %s, %s) RETURNING id",
-                (username, password_hash, role),
+                "INSERT INTO users (username, password_hash, password_sha256, role) "
+                "VALUES (%s, %s, %s, %s) RETURNING id",
+                (username, password_hash, password_sha256, role),
             )
             return cur.fetchone()["id"]
 
@@ -111,7 +122,7 @@ class Database:
 
     def update_user(self, user_id: int, **fields) -> bool:
         """Met a jour un utilisateur (role, enabled, password_hash)."""
-        allowed = {"role", "enabled", "password_hash"}
+        allowed = {"role", "enabled", "password_hash", "password_sha256"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return False
@@ -158,6 +169,12 @@ class Database:
         """Supprime une PKI (cascade sur keys, csrs, certs, crls)."""
         with self.cursor() as cur:
             cur.execute("DELETE FROM pkis WHERE id = %s", (pki_id,))
+            return cur.rowcount > 0
+
+    def rename_pki(self, pki_id: int, new_name: str) -> bool:
+        """Renomme une PKI."""
+        with self.cursor() as cur:
+            cur.execute("UPDATE pkis SET name = %s WHERE id = %s", (new_name, pki_id))
             return cur.rowcount > 0
 
     def get_user_pkis(self, user_id: int) -> list[int]:
@@ -362,3 +379,126 @@ class Database:
                 "VALUES (%s, %s, %s, %s)",
                 (user_id, ip_address, action, details),
             )
+
+    def get_recent_logs(self, limit: int = 100) -> list[dict]:
+        """Recupere les derniers evenements d'audit."""
+        with self.cursor(commit=False) as cur:
+            cur.execute(
+                "SELECT l.id, l.timestamp, u.username, l.ip_address, l.action, l.details "
+                "FROM logs l "
+                "LEFT JOIN users u ON l.user_id = u.id "
+                "ORDER BY l.timestamp DESC LIMIT %s",
+                (limit,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    #  TOTP
+    # ------------------------------------------------------------------
+
+    def set_totp(self, user_id: int, secret: str, enabled: bool = False) -> None:
+        """Stocke ou met a jour le secret TOTP d'un utilisateur."""
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET totp_secret = %s, totp_enabled = %s WHERE id = %s",
+                (secret, enabled, user_id),
+            )
+
+    def store_recovery_codes(self, user_id: int, codes: list) -> None:
+        """Stocke les codes de recuperation TOTP sous forme JSON."""
+        import json
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET recovery_codes = %s WHERE id = %s",
+                (json.dumps(codes), user_id),
+            )
+
+    def use_recovery_code(self, user_id: int, code: str) -> bool:
+        """Verifie et consomme un code de recuperation (usage unique)."""
+        import json
+        user = self.get_user_by_id(user_id)
+        if not user or not user.get("recovery_codes"):
+            return False
+        try:
+            codes = json.loads(user["recovery_codes"])
+        except (ValueError, TypeError):
+            return False
+        code_upper = code.upper()
+        if code_upper not in codes:
+            return False
+        codes.remove(code_upper)
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET recovery_codes = %s WHERE id = %s",
+                (json.dumps(codes) if codes else None, user_id),
+            )
+        return True
+
+    def get_user_by_id(self, user_id: int) -> dict | None:
+        """Recupere un utilisateur par son id."""
+        with self.cursor(commit=False) as cur:
+            cur.execute(
+                "SELECT id, username, totp_secret, totp_enabled, recovery_codes "
+                "FROM users WHERE id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    #  Verrouillage de compte (brute-force protection)
+    # ------------------------------------------------------------------
+
+    MAX_FAILED_ATTEMPTS = 5   # tentatives avant blocage
+    LOCKOUT_MINUTES     = 15  # duree du blocage en minutes
+
+    def record_failed_login(self, username: str) -> int:
+        """Incremente le compteur d'echecs et verrouille si seuil atteint.
+        Retourne le nombre de tentatives apres incrementation."""
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET failed_attempts = failed_attempts + 1, "
+                "locked_until = CASE "
+                "  WHEN failed_attempts + 1 >= %s "
+                "  THEN CURRENT_TIMESTAMP + INTERVAL '%s minutes' "
+                "  ELSE locked_until "
+                "END "
+                "WHERE username = %s "
+                "RETURNING failed_attempts",
+                (self.MAX_FAILED_ATTEMPTS, self.LOCKOUT_MINUTES, username),
+            )
+            row = cur.fetchone()
+            return row["failed_attempts"] if row else 0
+
+    def reset_failed_login(self, user_id: int) -> None:
+        """Remet a zero le compteur d'echecs apres un login reussi."""
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = %s",
+                (user_id,),
+            )
+
+    def is_account_locked(self, username: str) -> bool:
+        """Retourne True si le compte est actuellement verrouille."""
+        with self.cursor(commit=False) as cur:
+            cur.execute(
+                "SELECT locked_until FROM users WHERE username = %s",
+                (username,),
+            )
+            row = cur.fetchone()
+            if not row or not row["locked_until"]:
+                return False
+            from datetime import timezone
+            now = __import__("datetime").datetime.now(tz=timezone.utc)
+            return row["locked_until"] > now
+
+    def get_user_full(self, username: str) -> dict | None:
+        """Recupere un utilisateur avec toutes ses colonnes (y compris TOTP)."""
+        with self.cursor(commit=False) as cur:
+            cur.execute(
+                "SELECT id, username, password_hash, password_sha256, role, enabled, "
+                "totp_secret, totp_enabled FROM users WHERE username = %s",
+                (username,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None

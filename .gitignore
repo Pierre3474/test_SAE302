@@ -8,11 +8,22 @@
 # Cles privees et certificats
 *.pem
 *.csr
+*.key
+*.crt
 keys/
+certs/
 
 # Python
 __pycache__/
 *.pyc
+*.pyo
+venv/
+env/
+.venv/
+
+# Outils de développement
+.ruff_cache/
+.mypy_cache/
 
 # Tests / pytest
 .pytest_cache/
@@ -22,9 +33,11 @@ htmlcov/
 # Logs serveur
 logs/*.log
 
+# Rapport de couverture
+.coveragerc
+
+# macOS
+.DS_Store
+
 # Docker volumes
 postgres_data/
-
-# Brouillons
-SAE303/
-drafts/

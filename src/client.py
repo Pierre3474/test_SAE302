@@ -231,7 +231,7 @@ class PKIClient:
         """
         af = socket.AF_INET6 if getattr(self, 'ipv6', False) else socket.AF_INET
         self.sock = socket.socket(af, socket.SOCK_STREAM)
-        self.sock.settimeout(10)  # Timeout de 10 secondes
+        self.sock.settimeout(30)  # Timeout de 30 secondes (Argon2 peut etre lent)
         self.sock.connect((self.host, self.port))
 
         # Wrapping TLS si demande
@@ -364,17 +364,24 @@ class PKIClient:
             response_hash = hashlib.sha256(
                 (self.challenge + pwd_sha256).encode("utf-8")
             ).hexdigest()
-            response = self.send_command(f"login {username} CHALL:{response_hash}")
+            cmd = f"login {username} CHALL:{response_hash}"
         else:
-            # Fallback : login classique (serveur sans challenge)
-            response = self.send_command(f"login {username} {password}")
+            cmd = f"login {username} {password}"
+
+        stop_ev, spin_t = _spinner_start("Authentification en cours...")
+        response = self.send_command(cmd)
+        _spinner_stop(stop_ev, spin_t)
+
         # Ne pas logger la reponse complete (pourrait contenir des infos sensibles)
         logger.info("AUTH: %s", response.split()[0] if response else "pas de reponse")
 
         # Le serveur demande un code OTP (TOTP / 2FA)
         if response == "OTP_REQUIRED":
-            otp_code = input("Code OTP (FreeOTP/Authenticator): ").strip()
+            print(_warn("\n  2FA activee — entrez votre code TOTP.\n"))
+            otp_code = getpass.getpass("  Code OTP (6 chiffres) : ").strip()
+            stop_ev, spin_t = _spinner_start("Verification OTP...")
             response = self.send_command(f"otp {otp_code}")
+            _spinner_stop(stop_ev, spin_t)
             logger.info("OTP: %s", response.split()[0] if response else "pas de reponse")
 
         # Le serveur repond "OK <role>" (+ eventuellement des warnings d'expiry)

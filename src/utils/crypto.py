@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 from cryptography.hazmat.primitives.asymmetric import rsa   # Cles RSA
 from cryptography.hazmat.primitives import hashes            # SHA-256
 from cryptography.hazmat.primitives import serialization     # PEM
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes  # AES
+from cryptography.hazmat.primitives import padding as sym_padding              # PKCS7
 from cryptography import x509                                # Certificats X.509
 from cryptography.x509.oid import NameOID                    # OID standards (CN, O, C)
 
@@ -79,6 +81,84 @@ class XorCipher:
         """
         # Expression generatrice : XOR chaque octet avec la cle
         return bytes(b ^ self.key for b in data)
+
+
+# ===================================================================
+#  CHIFFREMENT AES-CBC — chiffrement par blocs (TP1)
+# ===================================================================
+
+class AesCipher:
+    """
+    Chiffrement par blocs AES-CBC avec padding PKCS7.
+
+    Utilise AES-128, AES-192 ou AES-256 selon la taille de la cle.
+    Chaque chiffrement utilise un IV aleatoire de 16 octets,
+    prepend au ciphertext : [IV (16 octets)][ciphertext].
+
+    Attributs :
+        key (bytes) : cle AES (16, 24 ou 32 octets).
+    """
+
+    BLOCK_SIZE = 128  # bits (16 octets)
+
+    def __init__(self, key: bytes):
+        """
+        Args:
+            key : cle AES en bytes (16, 24 ou 32 octets).
+
+        Raises:
+            ValueError : si la cle n'a pas une taille valide.
+        """
+        if len(key) not in (16, 24, 32):
+            raise ValueError(
+                f"La cle AES doit faire 16, 24 ou 32 octets (recu: {len(key)})"
+            )
+        self.key = key
+
+    def __repr__(self) -> str:
+        return f"AesCipher(key_size={len(self.key) * 8}bits)"
+
+    def encrypt(self, data: bytes) -> bytes:
+        """
+        Chiffre les donnees avec AES-CBC + PKCS7.
+
+        Genere un IV aleatoire a chaque appel.
+        Le resultat est [IV (16 octets)] + [ciphertext].
+
+        Args:
+            data : donnees en clair a chiffrer.
+
+        Returns:
+            Bytes IV + ciphertext.
+        """
+        iv = os.urandom(16)
+        padder = sym_padding.PKCS7(self.BLOCK_SIZE).padder()
+        padded = padder.update(data) + padder.finalize()
+        cipher = Cipher(algorithms.AES(self.key), modes.CBC(iv))
+        enc = cipher.encryptor()
+        return iv + enc.update(padded) + enc.finalize()
+
+    def decrypt(self, data: bytes) -> bytes:
+        """
+        Dechiffre des donnees chiffrees avec AES-CBC + PKCS7.
+
+        Args:
+            data : bytes IV (16) + ciphertext.
+
+        Returns:
+            Donnees en clair.
+
+        Raises:
+            ValueError : si les donnees sont trop courtes (< 16 octets).
+        """
+        if len(data) < 16:
+            raise ValueError("Donnees trop courtes pour contenir un IV AES (< 16 octets).")
+        iv, ciphertext = data[:16], data[16:]
+        cipher = Cipher(algorithms.AES(self.key), modes.CBC(iv))
+        dec = cipher.decryptor()
+        padded = dec.update(ciphertext) + dec.finalize()
+        unpadder = sym_padding.PKCS7(self.BLOCK_SIZE).unpadder()
+        return unpadder.update(padded) + unpadder.finalize()
 
 
 # ===================================================================

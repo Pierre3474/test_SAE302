@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from utils.crypto import (
     XorCipher,
+    AesCipher,
     generate_key_pair,
     generate_csr,
     show_key_info,
@@ -286,3 +287,84 @@ class TestHashFile:
             f.write("test")
         with pytest.raises(ValueError):
             hash_file(test_file, algorithm="algo_inexistant")
+
+
+# ===================================================================
+#  TESTS AesCipher — chiffrement par blocs AES-CBC
+# ===================================================================
+
+class TestAesCipher:
+    """Tests pour la classe AesCipher (TP1 — chiffrement par blocs)."""
+
+    def test_chiffrement_dechiffrement_aes128(self):
+        """AES-128 : le dechiffrement doit redonner le message original."""
+        cle = b"cle_aes_16bytes!"  # 16 octets = AES-128
+        cipher = AesCipher(cle)
+        message = b"Message de test SAE302"
+        chiffre = cipher.encrypt(message)
+        assert cipher.decrypt(chiffre) == message
+
+    def test_chiffrement_dechiffrement_aes256(self):
+        """AES-256 : le dechiffrement doit redonner le message original."""
+        cle = b"cle_aes_32bytes_pour_aes256!!!!!!"[:32]
+        cipher = AesCipher(cle)
+        message = b"Donnee confidentielle"
+        assert cipher.decrypt(cipher.encrypt(message)) == message
+
+    def test_iv_aleatoire(self):
+        """Deux chiffrements du meme message doivent donner des resultats differents (IV aleatoire)."""
+        cle = b"cle_aes_16bytes!"
+        cipher = AesCipher(cle)
+        message = b"meme message"
+        c1 = cipher.encrypt(message)
+        c2 = cipher.encrypt(message)
+        assert c1 != c2  # IV different a chaque fois
+
+    def test_chiffrement_donnees_vides(self):
+        """AES doit chiffrer/dechiffrer des donnees vides (avec padding)."""
+        cle = b"cle_aes_16bytes!"
+        cipher = AesCipher(cle)
+        assert cipher.decrypt(cipher.encrypt(b"")) == b""
+
+    def test_chiffrement_donnees_grandes(self):
+        """AES doit traiter de grandes donnees correctement."""
+        cle = b"cle_aes_16bytes!"
+        cipher = AesCipher(cle)
+        message = b"A" * 10_000
+        assert cipher.decrypt(cipher.encrypt(message)) == message
+
+    def test_cle_invalide_taille(self):
+        """Une cle de mauvaise taille doit lever ValueError."""
+        with pytest.raises(ValueError):
+            AesCipher(b"trop_courte")  # 11 octets
+
+    def test_cle_invalide_0_octets(self):
+        """Une cle vide doit lever ValueError."""
+        with pytest.raises(ValueError):
+            AesCipher(b"")
+
+    def test_decrypt_donnees_trop_courtes(self):
+        """Dechiffrer moins de 16 octets (pas d'IV) doit lever ValueError."""
+        cle = b"cle_aes_16bytes!"
+        cipher = AesCipher(cle)
+        with pytest.raises(ValueError):
+            cipher.decrypt(b"court")
+
+    def test_repr(self):
+        """__repr__ doit indiquer la taille de la cle."""
+        cipher = AesCipher(b"cle_aes_16bytes!")
+        assert "128" in repr(cipher)
+
+    def test_aes192(self):
+        """AES-192 (cle 24 octets) doit fonctionner."""
+        cle = b"cle_aes_24bytes_exacte!!"  # 24 octets
+        cipher = AesCipher(cle)
+        message = b"Test AES-192"
+        assert cipher.decrypt(cipher.encrypt(message)) == message
+
+    def test_chiffrement_binaire(self):
+        """AES doit traiter des donnees binaires (non-UTF8)."""
+        cle = b"cle_aes_16bytes!"
+        cipher = AesCipher(cle)
+        message = bytes(range(256))
+        assert cipher.decrypt(cipher.encrypt(message)) == message

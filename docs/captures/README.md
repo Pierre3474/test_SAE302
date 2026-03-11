@@ -1,136 +1,200 @@
 # Captures réseau — SAE302 PKI
 
-Ce dossier contient les captures Wireshark/tcpdump réalisées lors des tests
-du client/serveur PKI en IPv4 et IPv6.
+Ce dossier contient les captures Wireshark/tcpdump prouvant le fonctionnement
+du chiffrement et du support IPv4/IPv6 du client/serveur PKI.
 
 ---
 
-## Scénarios capturés
+## Fichiers présents
 
-| Fichier | Scénario | Protocole |
-|---------|----------|-----------|
-| `ipv4_login.pcap` | Login challenge-response en IPv4 | TCP/IPv4 |
-| `ipv4_keygen.pcap` | Génération de clé RSA 4096 en IPv4 | TCP/IPv4 |
-| `ipv6_login.pcap` | Login challenge-response en IPv6 | TCP/IPv6 |
-| `ipv6_keygen.pcap` | Génération de clé RSA 4096 en IPv6 | TCP/IPv6 |
-| `ipv4_server_ipv6_client.pcap` | Serveur IPv4 + Client IPv6 → échec attendu | — |
-| `ipv6_server_ipv4_client.pcap` | Serveur IPv6 + Client IPv4 → échec attendu | — |
+| Fichier | TP | Ce que ça prouve |
+|---------|-----|-----------------|
+| `ipv4_login.pcap` | TP1 + TP3 | Chiffrement XOR actif — payload illisible en IPv4 |
+| `aes_demo.pcap` | TP1 | Mini client/serveur AES-CBC — payload illisible sans la clé |
+| `tls_login.pcap` | TP1 | Handshake TLS visible + données AES-GCM illisibles |
+| `pki_operations.pcap` | TP1 + TP3 | Opérations PKI réelles (keygen, sign) chiffrées XOR |
+| `ipv6_login.pcap` | TP3 | Connexion IPv6 fonctionnelle (adresses `::1`) |
+| `ipv4_server_ipv6_client.pcap` | TP3 | Serveur IPv4 refuse un client IPv6 (RST immédiat) |
+| `ipv6_server_ipv4_client.pcap` | TP3 | Serveur IPv6 refuse un client IPv4 (RST immédiat) |
 
-> Les captures `.pcap` sont ajoutées manuellement (voir procédure ci-dessous).
-
----
-
-## Procédure de capture
-
-### Prérequis
-```bash
-# macOS
-brew install wireshark   # ou télécharger depuis wireshark.org
-# Linux
-sudo apt install wireshark tcpdump
-```
-
-### Capture IPv4
-```bash
-# Terminal 1 — Démarrer la capture
-sudo tcpdump -i lo0 -w captures/ipv4_login.pcap 'tcp port 7890'
-# (sur Linux : -i lo au lieu de lo0)
-
-# Terminal 2 — Serveur
-docker compose up -d
-python src/server.py
-
-# Terminal 3 — Client
-python src/client.py -H 127.0.0.1 -u admin -p
-# Taper quelques commandes puis bye
-
-# Arrêter la capture : Ctrl+C dans Terminal 1
-```
-
-### Capture IPv6
-```bash
-# Terminal 1 — Démarrer la capture
-sudo tcpdump -i lo0 -w captures/ipv6_login.pcap 'ip6 and tcp port 7890'
-
-# Terminal 2 — Serveur IPv6
-SERVER_IPV6=1 python src/server.py
-
-# Terminal 3 — Client IPv6
-python src/client.py -H ::1 -6 -u admin -p
-
-# Arrêter la capture : Ctrl+C dans Terminal 1
-```
-
-### Test de compatibilité IPv4 ↔ IPv6
-```bash
-# Test 1 : Serveur IPv4, Client IPv6 → doit échouer
-python src/server.py &                          # serveur IPv4
-python src/client.py -H ::1 -6 -u admin -p     # connexion IPv6 → refusée
-
-# Test 2 : Serveur IPv6, Client IPv4 → doit échouer
-SERVER_IPV6=1 python src/server.py &            # serveur IPv6
-python src/client.py -H 127.0.0.1 -u admin -p  # connexion IPv4 → refusée
-```
+> Générées automatiquement avec : `sudo bash scripts/capture_wireshark.sh`
 
 ---
 
-## Analyse des captures (Wireshark)
+## TP1 — Preuve du chiffrement
 
-### Filtres utiles
+### 1. Chiffrement XOR (`ipv4_login.pcap`)
+
+**Filtre Wireshark :** `tcp.port == 7890 && tcp.len > 0`
+
+Ce qu'on observe :
+- Handshake TCP 3-way (SYN → SYN-ACK → ACK)
+- Les paquets de données (`[P.]`) contiennent un payload **illisible** (octets aléatoires)
+- Le header de framing de 10 octets est visible en début de chaque message :
+  ```
+  Exemple : "92        " suivi de 92 octets XOR chiffrés
+  ```
+- Le même XOR avec `key=42` rend les données incompréhensibles sans la clé
+
+**Conclusion :** les échanges login/whoami/bye sont chiffrés — impossible de lire
+les commandes ou les réponses en clair depuis le réseau.
+
+---
+
+### 2. Chiffrement TLS (`tls_login.pcap`)
+
+**Filtre Wireshark :** `tcp.port == 7890`
+
+Ce qu'on observe :
+- **Handshake TLS** complet en début de session :
+  - `Client Hello` — le client propose ses suites cryptographiques
+  - `Server Hello` — le serveur choisit (ex. TLS_AES_256_GCM_SHA384)
+  - `Certificate` — le serveur envoie son certificat X.509
+  - `Client Key Exchange` / `Finished` — négociation terminée
+- Après le handshake : paquets `Application Data` **totalement illisibles**
+- Contrairement au XOR seul, même le header de framing est chiffré par TLS
+
+**Conclusion :** avec TLS, on a une double couche de chiffrement :
 ```
-# Tout le trafic PKI
-tcp.port == 7890
+[TLS AES-GCM] enveloppe [XOR stream cipher]
+```
+TLS assure confidentialité + intégrité + authentification du serveur.
 
-# IPv4 uniquement
-tcp.port == 7890 && ip
+---
 
-# IPv6 uniquement
-tcp.port == 7890 && ipv6
+### 2. Chiffrement AES-CBC (`aes_demo.pcap`)
 
-# Contenu chiffré (payload non lisible)
-tcp.port == 7890 && tcp.len > 0
+**Filtre Wireshark :** `tcp.port == 19877 && tcp.len > 0`
+
+Ce qu'on observe :
+- Connexion TCP entre client et serveur AES local (port 19877)
+- Header de framing 10 octets visible en début de chaque message
+- Payload **totalement illisible** sans la clé AES
+- Contrairement au XOR : deux chiffrements du même message donnent des octets différents (IV aléatoire)
+
+**Ce que ça prouve :** AES-CBC avec IV aléatoire garantit la **sécurité sémantique** —
+impossible de détecter des messages identiques en analysant le trafic.
+
+---
+
+### 3. Opérations PKI chiffrées (`pki_operations.pcap`)
+
+**Filtre Wireshark :** `tcp.port == 7890 && tcp.len > 0`
+
+Ce qu'on observe :
+- Login admin, création d'une PKI (`pki add`), génération de clé RSA (`keygen`)
+- Chaque commande et réponse PKI est chiffrée XOR — illisible dans Wireshark
+- Les opérations RSA (keygen 2048 bits) génèrent des paquets plus longs
+- Même les noms de PKI, algorithmes et paramètres sont illisibles
+
+**Ce que ça prouve :** toutes les opérations PKI sensibles (création de clés,
+noms des CAs, paramètres RSA) transitent chiffrées sur le réseau.
+
+---
+
+### 4. Handshake TLS (`tls_login.pcap`)
+
+**Filtre Wireshark :** `tcp.port == 7890`
+
+Ce qu'on observe :
+- **Handshake TLS** complet en début de session :
+  - `Client Hello` — le client propose ses suites cryptographiques
+  - `Server Hello` — le serveur choisit (ex. TLS_AES_256_GCM_SHA384)
+  - `Certificate` — le serveur envoie son certificat X.509
+  - `Finished` — négociation terminée
+- Après le handshake : paquets `Application Data` **totalement illisibles**
+- Même le header de framing XOR est chiffré par TLS
+
+**Conclusion :** avec TLS, double couche de chiffrement :
+```
+[TLS AES-GCM] enveloppe [XOR stream cipher]
 ```
 
-### Ce qu'on observe
+---
 
-**Header de framing (10 octets ASCII) :**
-```
-Offset  Valeur    Signification
-0-9     "42      " = taille du payload suivant (42 octets)
-10+     <octets XOR chiffrés>
-```
+## TP3 — Preuve du support IPv6
 
-**En IPv4 :**
-- Adresses source/destination en `127.0.0.1`
-- Handshake TCP 3-way (SYN, SYN-ACK, ACK)
-- Payload illisible (chiffré XOR)
+### 3. Connexion IPv6 (`ipv6_login.pcap`)
 
-**En IPv6 :**
+**Filtre Wireshark :** `tcp.port == 7890 && ipv6`
+
+Ce qu'on observe :
 - Adresses source/destination en `::1` (loopback IPv6)
-- Même structure TCP mais encapsulé dans IPv6
-- Header IPv6 de 40 octets (vs 20 pour IPv4)
+- Header IPv6 de **40 octets** (vs 20 pour IPv4)
+- Handshake TCP 3-way identique à IPv4
+- Payload chiffré XOR (illisible) — même comportement qu'en IPv4
 
-**Avec TLS :**
-```bash
-sudo tcpdump -i lo0 -w captures/tls_login.pcap 'tcp port 7890'
-python src/server.py --tls &
-python src/client.py -H 127.0.0.1 -u admin -p --tls --no-verify
-```
-→ On voit le handshake TLS (ClientHello, ServerHello, Certificate...)
-→ Les données applicatives sont chiffrées AES-GCM (illisibles même dans Wireshark)
+**Comparaison IPv4 vs IPv6 :**
+
+| Propriété | IPv4 (`ipv4_login.pcap`) | IPv6 (`ipv6_login.pcap`) |
+|-----------|--------------------------|--------------------------|
+| Adresses | `127.0.0.1` | `::1` |
+| Header IP | 20 octets | 40 octets |
+| Handshake TCP | SYN/SYN-ACK/ACK | SYN/SYN-ACK/ACK |
+| Payload | Chiffré XOR | Chiffré XOR |
 
 ---
 
-## Réponse aux questions du TP3
+### 4. Incompatibilité IPv4 ↔ IPv6
+
+#### Serveur IPv4 + Client IPv6 (`ipv4_server_ipv6_client.pcap`)
+
+**Filtre Wireshark :** `tcp.port == 7890`
+
+Ce qu'on observe :
+- Le client IPv6 envoie un `SYN` vers `::1:7890`
+- Le serveur répond immédiatement par un `RST` (Reset)
+- **Aucun échange de données** — connexion refusée au niveau TCP
+
+**Explication :** un socket `AF_INET` ne peut pas accepter de connexions
+provenant d'une adresse IPv6. Les familles d'adresses sont incompatibles.
+
+---
+
+#### Serveur IPv6 + Client IPv4 (`ipv6_server_ipv4_client.pcap`)
+
+**Filtre Wireshark :** `tcp.port == 7890`
+
+Ce qu'on observe :
+- Le client IPv4 envoie un `SYN` vers `127.0.0.1:7890`
+- Le serveur répond immédiatement par un `RST`
+- **Aucun échange de données** — connexion refusée
+
+**Explication :** `IPV6_V6ONLY=1` désactive le mode dual-stack.
+Le serveur n'écoute que sur `::` et refuse les connexions IPv4.
+
+---
+
+## Réponses aux questions du TP3
 
 ### Le serveur IPv4 supporte-t-il un client IPv6 ?
-**Non.** Un socket `AF_INET` refuse les connexions provenant d'une adresse `::1`.
-L'erreur côté client : `[ERRNO 111] Connection refused` ou `[ERRNO 22] Invalid argument`.
+**Non.** Un socket `AF_INET` refuse les connexions `::1` → RST immédiat.
 
 ### Le serveur IPv6 (`IPV6_V6ONLY=1`) supporte-t-il un client IPv4 ?
-**Non.** `IPV6_V6ONLY=1` désactive le mode dual-stack.
-Le client IPv4 tente de se connecter à `127.0.0.1` mais le serveur n'écoute que sur `::`.
+**Non.** `IPV6_V6ONLY=1` désactive le dual-stack → RST immédiat.
 
-### Comment rendre le serveur dual-stack (IPv4 + IPv6) ?
-Passer `IPV6_V6ONLY=0` et lier sur `::` — sur Linux, cela accepte aussi les connexions IPv4
-via l'adresse mappée `::ffff:127.0.0.1`. Sur macOS, comportement non garanti.
+### Comment rendre le serveur dual-stack ?
+Passer `IPV6_V6ONLY=0` et lier sur `::` — sur Linux, cela accepte les connexions
+IPv4 via l'adresse mappée `::ffff:127.0.0.1`. Sur macOS, non garanti.
+
+---
+
+## Ouvrir les captures
+
+```bash
+# Wireshark (GUI)
+wireshark docs/captures/ipv4_login.pcap
+wireshark docs/captures/tls_login.pcap
+
+# tcpdump (terminal)
+tcpdump -r docs/captures/ipv4_login.pcap -nn
+tcpdump -r docs/captures/ipv6_login.pcap -nn
+```
+
+**Filtres Wireshark recommandés :**
+```
+tcp.port == 7890                    # tout le trafic PKI
+tcp.port == 7890 && tcp.len > 0    # paquets avec payload uniquement
+tcp.port == 7890 && ipv6           # IPv6 uniquement
+tcp.flags.reset == 1               # paquets RST (incompatibilités)
+```

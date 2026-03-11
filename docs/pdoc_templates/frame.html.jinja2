@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="pdoc {{ __version__ }}"/>
+    <title>{% block title %}{% endblock %} — SAE302 PKI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    {% block favicon %}{% endblock %}
+    {% block head %}{% endblock %}
+    {% filter minify_css | indent %}
+        {% block style %}
+            <style>{% include "resources/bootstrap-reboot.min.css" %}</style>
+            <style>/*! syntax-highlighting.css */{% include "syntax-highlighting.css" %}</style>
+            {% block style_pdoc %}
+                {% block style_theme %}<style>/*! theme.css */{% include "theme.css" %}</style>{% endblock %}
+                {% block style_layout %}<style>/*! layout.css */{% include "layout.css" %}</style>{% endblock %}
+                {% block style_content %}<style>/*! content.css */{% include "content.css" %}</style>{% endblock %}
+                <style>/*! custom.css */{% include "custom.css" %}</style>
+            {% endblock %}
+        {% endblock %}
+    {% endfilter %}
+    {% if math %}{% include "math.html.jinja2" %}{% endif %}
+    {% if mermaid %}{% include "mermaid.html.jinja2" %}{% endif %}
+</head>
+<body>
+{% block body %}
+    <nav class="pdoc">
+        <a class="logo" href="{{ "../" * (module.name.count(".")) }}index.html">SAE302 PKI</a>
+        <label id="navtoggle" for="togglestate" class="pdoc-button">{% include 'resources/navtoggle.svg' %}</label>
+        <input id="togglestate" type="checkbox" aria-hidden="true" tabindex="-1">
+        <div>{% block nav %}{% endblock %}</div>
+    </nav>
+    {% block content %}{% endblock %}
+{% endblock body %}
+</body>
+</html>

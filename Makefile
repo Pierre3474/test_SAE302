@@ -12,7 +12,9 @@ USER     := admin
 
 .PHONY: help install db db-stop db-reset server server-tls server-web \
         client client-tls client-ipv6 web tls-cert test test-v \
-        coverage lint lint-fix logs clean fclean stop start demo start-demo check-env
+        coverage lint lint-fix logs clean fclean stop start demo start-demo check-env \
+        docs docs-serve \
+        tp1-xor tp1-aes tp1-rsa tp1-tls tp1 tp3-ipv6 tp3-totp tp3
 
 # ── Aide ─────────────────────────────────────────────────────
 help:
@@ -44,6 +46,18 @@ help:
 	@echo "  make start-demo    Tout lancer + initialiser la demo (1 commande)"
 	@echo "  make start         Demarrer PKI + web en arriere-plan"
 	@echo "  make stop          Arreter le serveur PKI et le serveur web"
+	@echo ""
+	@echo "  make tp1           Lancer toutes les demos TP1 (XOR, AES, RSA, TLS)"
+	@echo "  make tp1-xor       Demo chiffrement XOR"
+	@echo "  make tp1-aes       Demo chiffrement AES-CBC"
+	@echo "  make tp1-rsa       Demo chiffrement RSA"
+	@echo "  make tp1-tls       Demo chiffrement TLS"
+	@echo "  make tp3           Lancer toutes les demos TP3 (IPv6, TOTP)"
+	@echo "  make tp3-ipv6      Demo support IPv6"
+	@echo "  make tp3-totp      Demo authentification TOTP / FreeOTP"
+	@echo ""
+	@echo "  make docs          Generer la doc HTML (site/)"
+	@echo "  make docs-serve    Servir la doc en local (port 8888)"
 	@echo ""
 	@echo "  make logs          Afficher les logs du jour"
 	@echo "  make clean         Supprimer les fichiers temporaires"
@@ -116,6 +130,18 @@ coverage:
 	@echo ""
 	@echo "  Rapport HTML genere : open htmlcov/index.html"
 
+# ── Documentation (pdoc) ─────────────────────────────────────
+PDOC_TEMPLATES := docs/pdoc_templates
+
+docs:
+	rm -rf site/
+	$(PYTHON) -m pdoc $(SRC)/ --output-dir site/ --template-directory $(PDOC_TEMPLATES)
+	@echo ""
+	@echo "  Documentation generee : open site/index.html"
+
+docs-serve:
+	$(PYTHON) -m pdoc $(SRC)/ --template-directory $(PDOC_TEMPLATES) --port 8888
+
 lint:
 	ruff check src/ tests/
 
@@ -187,3 +213,28 @@ clean:
 fclean: clean
 	rm -rf certs/server.crt certs/server.key
 	@echo "Certificats supprimes."
+
+# ── TPs ──────────────────────────────────────────────────────
+TP_DIR := tps/py
+
+tp1-xor:
+	$(PYTHON) $(TP_DIR)/tp1_xor.py
+
+tp1-aes:
+	$(PYTHON) $(TP_DIR)/tp1_aes.py
+
+tp1-rsa:
+	$(PYTHON) $(TP_DIR)/tp1_rsa.py
+
+tp1-tls:
+	$(PYTHON) $(TP_DIR)/tp1_tls.py
+
+tp1: tp1-xor tp1-aes tp1-rsa tp1-tls
+
+tp3-ipv6:
+	$(PYTHON) $(TP_DIR)/tp3_ipv6.py
+
+tp3-totp:
+	$(PYTHON) $(TP_DIR)/tp3_totp.py
+
+tp3: tp3-ipv6 tp3-totp

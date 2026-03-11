@@ -208,9 +208,9 @@ def main():
     print(f"{BOLD}{'='*55}{RESET}")
     print(f"""
   Utilisateurs créés :
-    admin   / admin          → rôle admin  (accès total)
-    alice   / Alice@Secure!2024  → rôle editor (ca1)
-    bob     / Bob@Secure!2024    → rôle viewer (ca1)
+    admin   / admin               → rôle admin  (accès total)
+    alice   / Secure@P4ssw0rd!   → rôle editor (ca1)
+    bob     / Secure#P4ssw0rd!   → rôle viewer (ca1)
 
   PKI créées :
     ca1  — CN=SAE302-CA1 (RSA 4096)
